@@ -31,6 +31,7 @@ export function MicTest({ onClose }: Props) {
   const [heard, setHeard] = useState(false); // ooit duidelijk geluid opgevangen
   const [countdown, setCountdown] = useState(0);
   const [echoAnswer, setEchoAnswer] = useState<'yes' | 'no' | null>(null);
+  const [echoDone, setEchoDone] = useState(false);
 
   const res = useRef<{
     stream?: MediaStream;
@@ -63,6 +64,7 @@ export function MicTest({ onClose }: Props) {
     setError(null);
     setHeard(false);
     setEchoAnswer(null);
+    setEchoDone(false);
     unlockVoice();
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('Deze browser ondersteunt geen microfoon. Gebruik Chrome (Android) of Safari (iPhone).');
@@ -160,8 +162,12 @@ export function MicTest({ onClose }: Props) {
     setPhase('playing');
     const audio = new Audio(URL.createObjectURL(new Blob(chunks, { type: rec.mimeType })));
     r.playback = audio;
-    audio.onended = () => setPhase('live');
-    audio.play().catch(() => setPhase('live'));
+    const finish = () => {
+      setPhase('live');
+      setEchoDone(true);
+    };
+    audio.onended = finish;
+    audio.play().catch(finish);
   };
 
   const kind = deviceKind(label);
@@ -232,7 +238,7 @@ export function MicTest({ onClose }: Props) {
               </button>
             </div>
 
-            {phase === 'live' && res.current.playback && echoAnswer === null && (
+            {phase === 'live' && echoDone && echoAnswer === null && (
               <div className="echo-q">
                 <span>Hoorde je jezelf terug in je helm?</span>
                 <button className="secondary small" onClick={() => setEchoAnswer('yes')}>
