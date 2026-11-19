@@ -1,5 +1,7 @@
 // Routegenerator: maakt rondjes en A→B-routes en kiest de mooiste op basis van bochten.
 import { analyzeShape, bearing, destination, distance, type LatLng, type ShapeStats } from './geo';
+import { newRoadShare, riddenCells } from './logbook';
+import { citiesInArea, metersInCities, pushOutOfCities, type City } from './overpass';
 import { route, RoutingError, type Route, type RoutePrefs, type RoutingLocation } from './valhalla';
 
 export type TargetKind = 'distance' | 'time' | 'none';
@@ -16,7 +18,7 @@ export interface Candidate {
   id: string;
   label: string;
   route: Route;
-  stats: ShapeStats & { avgSpeedKmh: number };
+  stats: ShapeStats & { avgSpeedKmh: number; cityShare: number; newShare: number | null };
   score: number;
   /** Afwijking van het doel (0.1 = 10% te lang). */
   deviation: number;
@@ -45,8 +47,13 @@ function measure(r: Route, kind: TargetKind) {
   return kind === 'time' ? r.timeS / 60 : r.lengthM / 1000;
 }
 
-function score(r: Route, prefs: RoutePrefs, deviation: number, extraPenalty = 0) {
+// Steden in het plangebied (alleen gevuld als "steden vermijden" aan staat)
+let ctxCities: City[] = [];
+
+export function score(r: Route, prefs: RoutePrefs, deviation: number, extraPenalty = 0) {
   const shape = analyzeShape(r.shape);
+  const cityShare = ctxCities.length ? metersInCities(r.shape, ctxCities) / Math.max(1, r.lengthM) : 0;
+  const newShare = riddenCells().size ? newRoadShare(r.shape) : null;
   const avgSpeedKmh = r.lengthM / 1000 / (r.timeS / 3600);
   const wCurve = prefs.curviness / 3;
   let s = 0;
@@ -62,7 +69,9 @@ function score(r: Route, prefs: RoutePrefs, deviation: number, extraPenalty = 0)
   if (prefs.avoidHighways && r.hasHighway) s -= 1.5;
   if (prefs.avoidTolls && r.hasToll) s -= 1;
   s -= extraPenalty;
-  return { s, stats: { ...shape, avgSpeedKmh } };
+  if (prefs.avoidCities) s -= cityShare * 8;
+  if (prefs.preferNew && newShare !== null) s += (newShare - 0.5) * 4;
+  return { s, stats: { ...shape, avgSpeedKmh, cityShare, newShare } };
 }
 
 async function safeRoute(locs: RoutingLocation[], prefs: RoutePrefs, signal?: AbortSignal): Promise<Route | null> {
@@ -121,7 +130,7 @@ async function makeLoop(
 
   let best: { r: Route; dev: number } | null = null;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const vias = loopPoints(start, radius, heading, angles, radii);
+    const vias = loopPoints(start, radius, heading, angles, radii).map((v) => pushOutOfCities(v, ctxCities, [start]));
     const cls = viaRoadClass(prefs);
     const r = await safeRoute(
       [{ ...start, type: 'break' }, ...vias.map((v) => ({ ...v, type: 'through' as const, minRoadClass: cls })), { ...start, type: 'break' }],
@@ -176,7 +185,7 @@ async function makeAB(
       const frac = k / (nVias + 1) + rand(-0.05, 0.05);
       const onLine = destination(start, D * frac, brg);
       // Bij twee punten: beide aan dezelfde kant, zodat er een mooie boog ontstaat
-      vias.push(destination(onLine, offset * rand(0.85, 1.1), brg + 90 * side));
+      vias.push(pushOutOfCities(destination(onLine, offset * rand(0.85, 1.1), brg + 90 * side), ctxCities, [start, end]));
     }
     const cls = viaRoadClass(prefs);
     const r = await safeRoute(
@@ -216,6 +225,23 @@ export async function generate(
 ): Promise<Candidate[]> {
   const results: Candidate[] = [];
   let done = 0;
+
+  ctxCities = [];
+  if (req.prefs.avoidCities) {
+    const span =
+      req.mode === 'loop'
+        ? (req.target.kind === 'time' ? (req.target.value / 60) * estimatedSpeed(req.prefs) : req.target.kind === 'distance' ? req.target.value : 80) * 1000 * 0.45
+        : distance(req.start, req.end ?? req.start) * 0.75 + 15000;
+    const center = req.mode === 'ab' && req.end ? { lat: (req.start.lat + req.end.lat) / 2, lon: (req.start.lon + req.end.lon) / 2 } : req.start;
+    const ends = [req.start, ...(req.end ? [req.end] : [])];
+    // De stad waar je vertrekt of aankomt kun je niet vermijden: die telt niet mee
+    // Max. 10 s wachten: is de plekkendienst traag, dan zonder stedenfilter verder
+    const found = await Promise.race([
+      citiesInArea(center, span, signal).catch(() => [] as City[]),
+      new Promise<City[]>((r) => setTimeout(() => r([]), 10000)),
+    ]);
+    ctxCities = found.filter((c) => !ends.some((e) => distance(e, c) < c.radius + 1000));
+  }
 
   const run = async (jobs: (() => Promise<Candidate | null>)[]) => {
     onProgress?.(0, jobs.length);
@@ -290,4 +316,10 @@ export function curvinessStars(curvature: number): number {
   if (curvature < 75) return 3;
   if (curvature < 110) return 4;
   return 5;
+}
+
+/** Maak een kandidaat van een losse route (bewaard, gedeeld, geïmporteerd of aangepast). */
+export function candidateFromRoute(r: Route, prefs: RoutePrefs, label: string, id = Math.random().toString(36).slice(2)): Candidate {
+  const { s, stats } = score(r, prefs, 0);
+  return { id, label, route: r, stats, score: s, deviation: 0 };
 }

@@ -72,3 +72,15 @@ export const IconBike = (p: P) => (
     <path d="M5 16l4-6h5l3 6M9 10l-1-3H6M14 10l2-3h3" />
   </svg>
 );
+export const IconShare = (p: P) => (
+  <svg {...base(p)}><circle cx="18" cy="5" r="2.5" /><circle cx="6" cy="12" r="2.5" /><circle cx="18" cy="19" r="2.5" /><path d="M8.2 10.8l7.6-4.4M8.2 13.2l7.6 4.4" /></svg>
+);
+export const IconUpload = (p: P) => (
+  <svg {...base(p)}><path d="M12 15V3M7 8l5-5 5 5M4 21h16" /></svg>
+);
+export const IconOffline = (p: P) => (
+  <svg {...base(p)}><path d="M3 7l6-3 6 3 6-3v13l-6 3-6-3-6 3z" /><path d="M9 4v13M15 7v13" /></svg>
+);
+export const IconLog = (p: P) => (
+  <svg {...base(p)}><path d="M4 19h16M6 16l4-6 4 3 5-8" /></svg>
+);

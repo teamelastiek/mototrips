@@ -1,44 +1,79 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { clearRidden, riddenCells } from '../lib/logbook';
+import { clearOfflineMaps, offlineCacheSize } from '../lib/offline';
+import { getSettings, updateSettings, type AppSettings } from '../lib/settings';
 import { DEFAULT_SERVER, getServer, setServer } from '../lib/valhalla';
 import { isVoiceEnabled, setVoiceEnabled, speak, unlockVoice } from '../lib/voice';
 
-interface Props {
-  mapStyle: 'light' | 'dark';
-  setMapStyle: (s: 'light' | 'dark') => void;
+function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="toggle">
+      <span>{label}</span>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <i aria-hidden />
+    </label>
+  );
 }
 
-export function Settings({ mapStyle, setMapStyle }: Props) {
+export function Settings() {
+  const [s, setS] = useState<AppSettings>(getSettings());
   const [server, setServerState] = useState(getServer());
   const [voice, setVoice] = useState(isVoiceEnabled());
+  const [offline, setOffline] = useState<number | null>(null);
+  const [ridden, setRidden] = useState(riddenCells().size);
+  const set = (p: Partial<AppSettings>) => {
+    updateSettings(p);
+    setS(getSettings());
+  };
+
+  useEffect(() => {
+    offlineCacheSize().then((x) => setOffline(x.tiles));
+  }, []);
 
   return (
     <div className="settings">
       <section className="field">
         <h3>Kaart</h3>
         <div className="segmented">
-          <button className={mapStyle === 'light' ? 'on' : ''} onClick={() => setMapStyle('light')}>
-            Licht
-          </button>
-          <button className={mapStyle === 'dark' ? 'on' : ''} onClick={() => setMapStyle('dark')}>
-            Donker
-          </button>
+          {(
+            [
+              ['auto', 'Automatisch'],
+              ['light', 'Licht'],
+              ['dark', 'Donker'],
+            ] as const
+          ).map(([v, l]) => (
+            <button key={v} className={s.mapStyle === v ? 'on' : ''} onClick={() => set({ mapStyle: v })}>
+              {l}
+            </button>
+          ))}
         </div>
+        <p className="hint">Automatisch: donkere kaart na zonsondergang, zodat je 's avonds niet verblind wordt.</p>
       </section>
 
       <section className="field">
-        <h3>Gesproken aanwijzingen</h3>
-        <label className="toggle">
-          <span>Stem aan</span>
-          <input
-            type="checkbox"
+        <h3>Tankbereik</h3>
+        <div className="slider">
+          <output>{s.fuelRangeKm} km</output>
+          <input type="range" min={100} max={500} step={10} value={s.fuelRangeKm} onChange={(e) => set({ fuelRangeKm: +e.target.value })} />
+        </div>
+        <p className="hint">Hoe ver je met een volle tank komt. Bij langere routes stelt de app tankstops voor.</p>
+      </section>
+
+      <section className="field">
+        <h3>Navigatie</h3>
+        <div className="toggles">
+          <Toggle
+            label="Stem aan"
             checked={voice}
-            onChange={(e) => {
-              setVoice(e.target.checked);
-              setVoiceEnabled(e.target.checked);
+            onChange={(v) => {
+              setVoice(v);
+              setVoiceEnabled(v);
             }}
           />
-          <i aria-hidden />
-        </label>
+          <Toggle label="Maximumsnelheid tonen" checked={s.showSpeedLimit} onChange={(v) => set({ showSpeedLimit: v })} />
+          <Toggle label="Piep bij te hard rijden" checked={s.speedWarning} onChange={(v) => set({ speedWarning: v })} />
+          <Toggle label="Ritten opnemen in logboek" checked={s.recordRides} onChange={(v) => set({ recordRides: v })} />
+        </div>
         <button
           className="secondary"
           onClick={() => {
@@ -48,7 +83,42 @@ export function Settings({ mapStyle, setMapStyle }: Props) {
         >
           Test de stem
         </button>
-        <p className="hint">Koppel je telefoon aan je helm-intercom via Bluetooth om de aanwijzingen te horen.</p>
+        <p className="hint">Koppel je telefoon aan je helm-intercom via Bluetooth om de aanwijzingen te horen. Maximumsnelheden komen uit OpenStreetMap en zijn niet overal bekend.</p>
+      </section>
+
+      <section className="field">
+        <h3>Opslag</h3>
+        <div className="storage-row">
+          <span>
+            Offline kaarten: <b>{offline === null ? '…' : `${offline} bestanden`}</b>
+          </span>
+          <button
+            className="link-btn"
+            disabled={!offline}
+            onClick={async () => {
+              await clearOfflineMaps();
+              setOffline(0);
+            }}
+          >
+            Wissen
+          </button>
+        </div>
+        <div className="storage-row">
+          <span>
+            Gereden wegen onthouden: <b>{ridden ? `${Math.round((ridden * 0.055) / 1)} km` : 'nog niets'}</b>
+          </span>
+          <button
+            className="link-btn"
+            disabled={!ridden}
+            onClick={() => {
+              if (!confirm('Alle gereden wegen vergeten? "Ontdek nieuwe wegen" begint dan opnieuw.')) return;
+              clearRidden();
+              setRidden(0);
+            }}
+          >
+            Wissen
+          </button>
+        </div>
       </section>
 
       <section className="field">
@@ -70,7 +140,8 @@ export function Settings({ mapStyle, setMapStyle }: Props) {
       <section className="field about">
         <h3>Over</h3>
         <p className="hint">
-          Kaart © OpenStreetMap-bijdragers, OpenFreeMap. Routes door Valhalla. Adressen via Photon. Controleer onderweg altijd zelf de verkeersborden.
+          Kaart © OpenStreetMap-bijdragers, OpenFreeMap. Routes, hoogtes en maximumsnelheden door Valhalla. Adressen via Photon. Tankstations en cafés via Overpass. Weer via
+          Open-Meteo. Controleer onderweg altijd zelf de verkeersborden.
         </p>
       </section>
     </div>

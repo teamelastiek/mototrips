@@ -3,6 +3,7 @@ import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import type { LatLng } from '../lib/geo';
+import type { Poi } from '../lib/overpass';
 
 // MapLibre zoekt zijn worker naast het eigen bestand; via Vite moet dat expliciet.
 maplibregl.setWorkerUrl(new URL(workerUrl, window.location.href).href);
@@ -17,7 +18,7 @@ export interface NavView {
 
 interface Props {
   styleName: 'light' | 'dark';
-  candidates: { id: string; shape: LatLng[] }[];
+  candidates: { id: string; shape: LatLng[]; kind?: 'route' | 'ride' }[];
   selectedId?: string;
   start?: LatLng | null;
   end?: LatLng | null;
@@ -29,6 +30,12 @@ interface Props {
   onMapClick?: (p: LatLng, screen: { x: number; y: number }) => void;
   onCandidateClick?: (id: string) => void;
   onUserPan?: () => void;
+  pois?: Poi[];
+  /** Tussenpunten versleepbaar maken */
+  editable?: boolean;
+  onViaDrag?: (index: number, p: LatLng) => void;
+  onViaClick?: (index: number, screen: { x: number; y: number }) => void;
+  onPoiClick?: (poi: Poi, screen: { x: number; y: number }) => void;
 }
 
 const STYLES = {
@@ -69,7 +76,7 @@ export function MapView(props: Props) {
   const ready = useRef(false);
   const propsRef = useRef(props);
   propsRef.current = props;
-  const markers = useRef<{ start?: maplibregl.Marker; end?: maplibregl.Marker; vias: maplibregl.Marker[]; user?: maplibregl.Marker }>({ vias: [] });
+  const markers = useRef<{ start?: maplibregl.Marker; end?: maplibregl.Marker; vias: maplibregl.Marker[]; pois: maplibregl.Marker[]; user?: maplibregl.Marker }>({ vias: [], pois: [] });
   const styleRef = useRef(props.styleName);
 
   // Kaart één keer aanmaken
@@ -111,7 +118,7 @@ export function MapView(props: Props) {
           source: 'cands',
           filter: ['==', ['get', 'selected'], true],
           layout: { 'line-cap': 'round', 'line-join': 'round' },
-          paint: { 'line-color': '#5a1f00', 'line-width': 10 },
+          paint: { 'line-color': ['case', ['==', ['get', 'kind'], 'ride'], '#0b2a4d', '#5a1f00'], 'line-width': 10 },
         });
         map.addLayer({
           id: 'cands-sel',
@@ -119,7 +126,7 @@ export function MapView(props: Props) {
           source: 'cands',
           filter: ['==', ['get', 'selected'], true],
           layout: { 'line-cap': 'round', 'line-join': 'round' },
-          paint: { 'line-color': ACCENT, 'line-width': 6 },
+          paint: { 'line-color': ['case', ['==', ['get', 'kind'], 'ride'], '#3d9bff', ACCENT], 'line-width': 6 },
         });
         map.addLayer({
           id: 'nav-casing',
@@ -185,7 +192,7 @@ export function MapView(props: Props) {
       features: p.candidates
         .map((c) => ({
           type: 'Feature' as const,
-          properties: { id: c.id, selected: c.id === p.selectedId },
+          properties: { id: c.id, selected: c.id === p.selectedId, kind: c.kind ?? 'route' },
           geometry: line(c.shape),
         }))
         // geselecteerde route bovenop tekenen
@@ -218,10 +225,47 @@ export function MapView(props: Props) {
     place('start', props.start, 'pin-start', 'A');
     place('end', sameAsStart ? null : props.end, 'pin-end', 'B');
     m.vias.forEach((v) => v.remove());
-    m.vias = (props.nav ? [] : props.vias ?? []).map((v) =>
-      new maplibregl.Marker({ element: markerEl('pin-via') }).setLngLat([v.lon, v.lat]).addTo(map),
-    );
-  }, [props.start, props.end, props.vias, props.nav]);
+    m.vias = (props.nav ? [] : props.vias ?? []).map((v, i) => {
+      const el = markerEl(props.editable ? 'pin-via editable' : 'pin-via');
+      const mk = new maplibregl.Marker({ element: el, draggable: !!props.editable }).setLngLat([v.lon, v.lat]).addTo(map);
+      if (props.editable) {
+        let dragged = false;
+        mk.on('dragstart', () => (dragged = true));
+        mk.on('dragend', () => {
+          const ll = mk.getLngLat();
+          propsRef.current.onViaDrag?.(i, { lat: ll.lat, lon: ll.lng });
+          setTimeout(() => (dragged = false), 50);
+        });
+        el.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          if (dragged) return;
+          const r = map.getContainer().getBoundingClientRect();
+          propsRef.current.onViaClick?.(i, { x: ev.clientX - r.left, y: ev.clientY - r.top });
+        });
+      }
+      return mk;
+    });
+  }, [props.start, props.end, props.vias, props.nav, props.editable]);
+
+  // Tankstations en cafés langs de route
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const m = markers.current;
+    m.pois.forEach((x) => x.remove());
+    m.pois = (props.nav ? [] : props.pois ?? []).map((poi) => {
+      const el = document.createElement('button');
+      el.className = `poi-pin ${poi.kind}`;
+      el.textContent = poi.kind === 'fuel' ? '⛽' : poi.kind === 'cafe' ? '☕' : '🍽️';
+      el.title = poi.name;
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const r = map.getContainer().getBoundingClientRect();
+        propsRef.current.onPoiClick?.(poi, { x: ev.clientX - r.left, y: ev.clientY - r.top });
+      });
+      return new maplibregl.Marker({ element: el }).setLngLat([poi.lon, poi.lat]).addTo(map);
+    });
+  }, [props.pois, props.nav]);
 
   // Inzoomen op routes
   useEffect(() => {

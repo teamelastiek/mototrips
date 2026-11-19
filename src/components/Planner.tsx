@@ -2,7 +2,8 @@ import type { Candidate, TargetKind } from '../lib/generator';
 import { curvinessStars } from '../lib/generator';
 import { formatDistance, formatDuration, type LatLng } from '../lib/geo';
 import type { RoutePrefs } from '../lib/valhalla';
-import { IconAB, IconBookmark, IconDownload, IconLoop, IconNav, IconRefresh, IconSwap } from './Icons';
+import type { ReactNode } from 'react';
+import { IconAB, IconBookmark, IconDownload, IconLoop, IconNav, IconRefresh, IconShare, IconSwap, IconUpload, IconOffline } from './Icons';
 import { PlaceInput, type NamedPoint } from './PlaceInput';
 
 export interface PlanSettings {
@@ -40,6 +41,14 @@ interface Props {
   onGpx: () => void;
   onSave: () => void;
   savedNotice: boolean;
+  details: ReactNode;
+  onShare: () => void;
+  shareNotice: string | null;
+  onOffline: () => void;
+  offline: { state: 'idle' | 'loading' | 'done' | 'error'; text?: string };
+  onImportGpx: () => void;
+  importing: boolean;
+  hasRides: boolean;
 }
 
 function Segmented<T extends string | number>({
@@ -117,7 +126,9 @@ export function Planner(props: Props) {
                     {c.route.hasToll && <em className="tag warn">tol</em>}
                     {c.route.hasFerry && <em className="tag">pont</em>}
                     {c.stats.overlap > 0.08 && <em className="tag">deels heen en terug</em>}
-                    {i === 0 && <em className="tag good">beste keus</em>}
+                    {c.stats.cityShare > 0.08 && <em className="tag warn">{Math.round(c.stats.cityShare * 100)}% door stad</em>}
+                    {c.stats.newShare !== null && <em className={`tag ${c.stats.newShare > 0.6 ? 'good' : ''}`}>{Math.round(c.stats.newShare * 100)}% nieuw</em>}
+                    {i === 0 && props.candidates.length > 1 && <em className="tag good">beste keus</em>}
                   </span>
                 </span>
               </button>
@@ -129,14 +140,26 @@ export function Planner(props: Props) {
             <IconNav size={20} /> Start navigatie
           </button>
           <div className="actions-row">
+            <button className="secondary" onClick={props.onSave} disabled={props.savedNotice}>
+              <IconBookmark size={18} /> {props.savedNotice ? 'Bewaard' : 'Bewaar'}
+            </button>
+            <button className="secondary" onClick={props.onShare}>
+              <IconShare size={18} /> {props.shareNotice ?? 'Deel'}
+            </button>
+          </div>
+          <div className="actions-row">
             <button className="secondary" onClick={props.onGpx}>
               <IconDownload size={18} /> GPX
             </button>
-            <button className="secondary" onClick={props.onSave} disabled={props.savedNotice}>
-              <IconBookmark size={18} /> {props.savedNotice ? 'Opgeslagen' : 'Bewaar'}
+            <button className="secondary" onClick={props.onOffline} disabled={props.offline.state === 'loading' || props.offline.state === 'done'}>
+              <IconOffline size={18} />{' '}
+              {props.offline.state === 'loading' ? props.offline.text : props.offline.state === 'done' ? 'Offline klaar' : props.offline.state === 'error' ? 'Opnieuw' : 'Offline kaart'}
             </button>
           </div>
+          {props.offline.state === 'done' && props.offline.text && <p className="hint">{props.offline.text}</p>}
+          {props.offline.state === 'error' && props.offline.text && <p className="field-error">{props.offline.text}</p>}
         </div>
+        {props.details}
       </div>
     );
   }
@@ -217,8 +240,18 @@ export function Planner(props: Props) {
           <Toggle label="Tolwegen vermijden" checked={prefs.avoidTolls} onChange={(avoidTolls) => setPrefs({ avoidTolls })} />
           <Toggle label="Veerponten vermijden" checked={prefs.avoidFerries} onChange={(avoidFerries) => setPrefs({ avoidFerries })} />
           <Toggle label="Onverharde wegen toestaan" checked={prefs.allowUnpaved} onChange={(allowUnpaved) => setPrefs({ allowUnpaved })} />
+          <Toggle label="Steden en grote dorpen vermijden" checked={prefs.avoidCities} onChange={(avoidCities) => setPrefs({ avoidCities })} />
+          <Toggle label="Ontdek nieuwe wegen" checked={prefs.preferNew} onChange={(preferNew) => setPrefs({ preferNew })} />
         </div>
       </section>
+
+      {prefs.preferNew && !props.hasRides && (
+        <p className="hint">“Ontdek nieuwe wegen” werkt zodra je ritten hebt gereden met navigatie: de app onthoudt dan welke wegen je al kent.</p>
+      )}
+
+      <button className="secondary import-btn" onClick={props.onImportGpx} disabled={props.importing}>
+        <IconUpload size={18} /> {props.importing ? 'GPX inlezen…' : 'GPX-bestand openen'}
+      </button>
 
       {props.error && <div className="error">{props.error}</div>}
 

@@ -1,7 +1,7 @@
 // Turn-by-turn navigatie-engine: koppelt GPS aan de route, kondigt afslagen aan
 // en berekent een nieuwe route als je van de route af rijdt.
 import { bearing, distance, pointAlong, projectOnRoute, type LatLng } from './geo';
-import { route as fetchRoute, type Maneuver, type Route, type RoutePrefs } from './valhalla';
+import { routeMany, type Maneuver, type Route, type RoutePrefs, type SpeedSegment } from './valhalla';
 
 export interface Fix extends LatLng {
   heading?: number | null;
@@ -27,6 +27,8 @@ export interface NavState {
   remainingS: number;
   arrived: boolean;
   accuracy?: number;
+  /** Maximumsnelheid van de huidige weg (km/u), als bekend */
+  speedLimit?: number;
 }
 
 export interface NavCallbacks {
@@ -66,6 +68,7 @@ export class Navigator {
   private started = false;
   private arrived = false;
   private smoothedSpeed = 0;
+  private speedSegs: SpeedSegment[] = [];
 
   constructor(route: Route, prefs: RoutePrefs, cb: NavCallbacks) {
     this.route = route;
@@ -85,7 +88,26 @@ export class Navigator {
     });
   }
 
+  /** Maximumsnelheden voor de huidige route (komen asynchroon binnen). */
+  setSpeedLimits(segs: SpeedSegment[], forRoute: Route) {
+    if (forRoute === this.route) this.speedSegs = segs;
+  }
+
+  private limitAt(along: number): number | undefined {
+    const s = this.speedSegs;
+    let lo = 0;
+    let hi = s.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (s[mid].to < along) lo = mid + 1;
+      else if (s[mid].from > along) hi = mid - 1;
+      else return s[mid].limit;
+    }
+    return undefined;
+  }
+
   private setRoute(r: Route, keepVias: LatLng[]) {
+    this.speedSegs = [];
     this.route = { ...r, vias: keepVias };
     // Bij rerouting zijn de tussenpunten ook doorgangspunten in de nieuwe route
     this.computeViaAlong();
@@ -184,6 +206,7 @@ export class Navigator {
       remainingS,
       arrived: this.arrived,
       accuracy: fix.accuracy,
+      speedLimit: off ? undefined : this.limitAt(along),
     });
   }
 
@@ -250,7 +273,7 @@ export class Navigator {
     try {
       // Nog niet gepasseerde tussenpunten behouden (anders wordt een rondje ineens afgekort)
       const remainingVias = this.route.vias.filter((_, i) => this.viaAlong[i] > this.lastAlong + 150);
-      const r = await fetchRoute(
+      const r = await routeMany(
         [
           { ...pos, type: 'break', ...(v > 2 ? { heading, headingTolerance: 45 } : {}) },
           ...remainingVias.map((p) => ({ ...p, type: 'through' as const })),
