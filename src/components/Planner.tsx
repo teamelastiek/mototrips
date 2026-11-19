@@ -49,6 +49,8 @@ interface Props {
   onImportGpx: () => void;
   importing: boolean;
   hasRides: boolean;
+  inGroup: boolean;
+  onGroup: () => void;
 }
 
 function Segmented<T extends string | number>({
@@ -156,6 +158,9 @@ export function Planner(props: Props) {
               {props.offline.state === 'loading' ? props.offline.text : props.offline.state === 'done' ? 'Offline klaar' : props.offline.state === 'error' ? 'Opnieuw' : 'Offline kaart'}
             </button>
           </div>
+          <button className="secondary group-btn" onClick={props.onGroup}>
+            👥 {props.inGroup ? 'Deze route naar de groep sturen' : 'Samen rijden'}
+          </button>
           {props.offline.state === 'done' && props.offline.text && <p className="hint">{props.offline.text}</p>}
           {props.offline.state === 'error' && props.offline.text && <p className="field-error">{props.offline.text}</p>}
         </div>

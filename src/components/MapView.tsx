@@ -36,6 +36,8 @@ interface Props {
   onViaDrag?: (index: number, p: LatLng) => void;
   onViaClick?: (index: number, screen: { x: number; y: number }) => void;
   onPoiClick?: (poi: Poi, screen: { x: number; y: number }) => void;
+  /** Groepsgenoten */
+  riders?: { id: string; name: string; color: string; lat: number; lon: number; heading: number; stale: boolean }[];
 }
 
 const STYLES = {
@@ -78,6 +80,7 @@ export function MapView(props: Props) {
   propsRef.current = props;
   const markers = useRef<{ start?: maplibregl.Marker; end?: maplibregl.Marker; vias: maplibregl.Marker[]; pois: maplibregl.Marker[]; user?: maplibregl.Marker }>({ vias: [], pois: [] });
   const styleRef = useRef(props.styleName);
+  const riderMarkers = useRef(new Map<string, { m: maplibregl.Marker; el: HTMLDivElement }>());
 
   // Kaart één keer aanmaken
   useEffect(() => {
@@ -246,6 +249,38 @@ export function MapView(props: Props) {
       return mk;
     });
   }, [props.start, props.end, props.vias, props.nav, props.editable]);
+
+  // Groepsgenoten
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const seen = new Set<string>();
+    for (const r of props.riders ?? []) {
+      seen.add(r.id);
+      let entry = riderMarkers.current.get(r.id);
+      if (!entry) {
+        const el = document.createElement('div');
+        el.className = 'rider-pin';
+        el.innerHTML = '<div class="rider-arrow"><svg viewBox="0 0 24 24" width="30" height="30"><path d="M12 2l8 19-8-4-8 4z" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div><span class="rider-name"></span>';
+        // Midden van de pijl op de positie; naam eronder
+        entry = { el, m: new maplibregl.Marker({ element: el, anchor: 'top', offset: [0, -15] }).setLngLat([r.lon, r.lat]).addTo(map) };
+        riderMarkers.current.set(r.id, entry);
+      }
+      entry.m.setLngLat([r.lon, r.lat]);
+      const arrow = entry.el.querySelector('.rider-arrow') as HTMLDivElement;
+      // Pijl draait mee met de kaart
+      arrow.style.transform = `rotate(${r.heading - map.getBearing()}deg)`;
+      (arrow.querySelector('path') as SVGPathElement).setAttribute('fill', r.color);
+      (entry.el.querySelector('.rider-name') as HTMLSpanElement).textContent = r.name;
+      entry.el.classList.toggle('stale', r.stale);
+    }
+    for (const [id, e] of riderMarkers.current) {
+      if (!seen.has(id)) {
+        e.m.remove();
+        riderMarkers.current.delete(id);
+      }
+    }
+  }, [props.riders, props.nav]);
 
   // Tankstations en cafés langs de route
   useEffect(() => {

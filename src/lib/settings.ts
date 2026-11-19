@@ -7,6 +7,10 @@ export interface AppSettings {
   showSpeedLimit: boolean;
   speedWarning: boolean;
   recordRides: boolean;
+  /** Naam die je groepsgenoten zien */
+  riderName: string;
+  /** Waarschuwen als iemand zo ver (km) achter raakt */
+  groupGapKm: number;
 }
 
 const KEY = 'mototrips.settings';
@@ -16,6 +20,8 @@ const DEFAULTS: AppSettings = {
   showSpeedLimit: true,
   speedWarning: true,
   recordRides: true,
+  riderName: '',
+  groupGapKm: 2,
 };
 
 let cache: AppSettings | null = null;

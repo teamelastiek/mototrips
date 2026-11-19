@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { formatDistance, formatDuration, pointAlong } from '../lib/geo';
+import { distance, formatDistance, formatDuration, pointAlong, projectOnRoute } from '../lib/geo';
+import { isStale, QUICK, type QuickKind, type Rider } from '../lib/group';
+import { relLabel, type RiderInfo } from './GroupUI';
 import { RideRecorder, type RideRecord } from '../lib/logbook';
 import { Navigator, Simulator, type NavState } from '../lib/navigator';
 import type { Poi } from '../lib/overpass';
@@ -20,6 +22,10 @@ interface Props {
   setFollow: (f: boolean) => void;
   onView: (v: NavView | null) => void;
   onExit: (ride: RideRecord | null) => void;
+  /** Elke positie (GPS of demo), voor delen met de groep */
+  onFix?: (f: { lat: number; lon: number; heading: number; speedKmh: number; accuracy?: number }) => void;
+  riders?: Rider[];
+  onQuick?: (k: QuickKind) => void;
 }
 
 function streetOf(m?: { streets: string[]; instruction: string }) {
@@ -45,7 +51,11 @@ function chime() {
   }
 }
 
-export function NavigationView({ route, name, prefs, demo: startDemo, follow, fuelStops, setFollow, onView, onExit }: Props) {
+export function NavigationView({ route, name, prefs, demo: startDemo, follow, fuelStops, setFollow, onView, onExit, onFix, riders = [], onQuick }: Props) {
+  const [quickOpen, setQuickOpen] = useState(false);
+  const gapWarned = useRef(new Set<string>());
+  const onFixRef = useRef(onFix);
+  onFixRef.current = onFix;
   const [state, setState] = useState<NavState | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [muted, setMuted] = useState(!isVoiceEnabled());
@@ -75,6 +85,7 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
         setState(s);
         const r = routeRef.current;
         const idx = pointAlong(r.shape, r.cum, s.along).index;
+        onFixRef.current?.({ lat: s.raw.lat, lon: s.raw.lon, heading: s.heading, speedKmh: s.speedKmh, accuracy: s.accuracy });
         onView({
           position: s.position,
           heading: s.heading,
@@ -170,6 +181,22 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
     return () => clearTimeout(t);
   }, [confirmStop]);
 
+  // Rijd ik voorop en raakt iemand ver achter? Dan één keer waarschuwen.
+  useEffect(() => {
+    if (!state || state.offRoute) return;
+    const gap = getSettings().groupGapKm * 1000;
+    const live = infos.filter((i) => !isStale(i.rider) && i.delta !== null);
+    if (!live.length || live.some((i) => (i.delta ?? 0) > 150)) return; // ik ben niet de voorste
+    for (const i of live) {
+      const behind = -(i.delta ?? 0);
+      if (behind > gap && !gapWarned.current.has(i.rider.id)) {
+        gapWarned.current.add(i.rider.id);
+        speak(`${i.rider.name} rijdt ${formatDistance(behind).replace('km', 'kilometer')} achter je. Even wachten?`, true);
+      } else if (behind < gap / 2) gapWarned.current.delete(i.rider.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.along, riders]);
+
   const exit = () => onExit(recorderRef.current?.finish(name) ?? null);
 
   const toggleMute = () => {
@@ -177,6 +204,14 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
     setMuted(!muted);
   };
 
+  // Groepsgenoten ten opzichte van mij, langs de route
+  const infos: RiderInfo[] = riders.map((r) => {
+    if (!r.pos || !state) return { rider: r, delta: null, straight: null };
+    const rt = routeRef.current;
+    const pr = projectOnRoute(r.pos, rt.shape, rt.cum);
+    const straight = distance(r.pos, state.raw);
+    return { rider: r, delta: pr && pr.offset < 300 ? pr.along - state.along : null, straight };
+  });
   const eta = state ? new Date(Date.now() + state.remainingS * 1000) : null;
   const next = state?.next;
   const over = state?.speedLimit !== undefined && state.speedKmh > state.speedLimit + 4;
@@ -268,12 +303,46 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
         )}
       </div>
 
+      {riders.length > 0 && (
+        <ul className="group-mini">
+          {infos.slice(0, 5).map((i) => (
+            <li key={i.rider.id} className={isStale(i.rider) ? 'stale' : ''}>
+              <span className="rider-dot" style={{ background: i.rider.color }} />
+              <b>{i.rider.name}</b> <span>{relLabel(i)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {quickOpen && onQuick && (
+        <div className="quick-pop">
+          {(Object.keys(QUICK) as QuickKind[]).map((k) => (
+            <button
+              key={k}
+              className="quick"
+              onClick={() => {
+                onQuick(k);
+                setQuickOpen(false);
+              }}
+            >
+              <span>{QUICK[k].icon}</span>
+              {QUICK[k].text}
+            </button>
+          ))}
+        </div>
+      )}
+
       {gpsError && state && !demo && <div className="nav-toast">{gpsError}</div>}
 
       <div className="nav-side">
         <button className="round-btn" onClick={toggleMute} title={muted ? 'Geluid aan' : 'Geluid uit'}>
           {muted ? <IconMute /> : <IconVolume />}
         </button>
+        {onQuick && (
+          <button className={`round-btn ${quickOpen ? 'accent' : ''}`} onClick={() => setQuickOpen(!quickOpen)} title="Bericht aan de groep">
+            👥
+          </button>
+        )}
         {!follow && (
           <button className="round-btn accent" onClick={() => setFollow(true)} title="Volg mijn positie">
             <IconRecenter />

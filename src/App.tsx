@@ -17,7 +17,23 @@ import { deleteRide, loadRides, rideTrack, type RideRecord } from './lib/logbook
 import { downloadRouteMap } from './lib/offline';
 import { poisAlongRoute, type Poi } from './lib/overpass';
 import { getSettings, onSettings, type AppSettings } from './lib/settings';
-import { shareRoute, takeSharedFromUrl } from './lib/share';
+import { decodeShare, encodeShare, shareRoute, takeSharedFromUrl, type SharedRoute } from './lib/share';
+import { groupRidesAvailable } from './lib/config';
+import {
+  GroupRide,
+  QUICK,
+  groupCodeFromUrl,
+  groupInviteUrl,
+  isStale,
+  loadStoredGroup,
+  newGroupCode,
+  storeGroup,
+  type QuickKind,
+  type Rider,
+} from './lib/group';
+import { speak } from './lib/voice';
+import { GroupChip, GroupNameDialog, GroupSheet, type RiderInfo } from './components/GroupUI';
+import { updateSettings } from './lib/settings';
 import { deleteSaved, loadPlanSettings, loadSaved, savePlanSettings, saveRoute, type SavedRoute } from './lib/storage';
 import { isDark, sunTimes } from './lib/sun';
 import { defaultPrefs, elevation, routeMany, type Route, type RoutePrefs, type RoutingLocation } from './lib/valhalla';
@@ -104,6 +120,21 @@ export default function App() {
   const [selectedRideId, setSelectedRideId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // ------------------------------------------------------------ groepsrit
+  const groupRef = useRef<GroupRide | null>(null);
+  const [group, setGroup] = useState<GroupRide | null>(null);
+  const [riders, setRidersState] = useState<Rider[]>([]);
+  const ridersRef = useRef<Rider[]>([]);
+  const setRiders = (r: Rider[]) => {
+    ridersRef.current = r;
+    setRidersState(r);
+  };
+  const [groupStatus, setGroupStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
+  const [groupSheet, setGroupSheet] = useState(false);
+  const [nameDialog, setNameDialog] = useState<{ mode: 'start' | 'join'; code?: string; routeCode?: string | null } | null>(null);
+  const [pendingRoute, setPendingRoute] = useState<{ code: string; from: string } | null>(null);
+  const [inviteNotice, setInviteNotice] = useState<string | null>(null);
+
   const [nav, setNav] = useState<{ route: Route; demo: boolean; name: string; fuel: Poi[] } | null>(null);
   const [navView, setNavView] = useState<NavView | null>(null);
   const [follow, setFollow] = useState(true);
@@ -150,8 +181,19 @@ export default function App() {
   }, []);
 
   function openSharedFromUrl() {
+    // Uitnodiging voor een groepsrit? (#g=CODE, eventueel met &r=route)
+    const g = groupCodeFromUrl();
+    const routeMatch = location.hash.match(/[#&]r=([\w-]+)/);
     const shared = takeSharedFromUrl();
-    if (shared) {
+    if (g) {
+      if (!shared) history.replaceState(null, '', location.pathname + location.search);
+      if (groupRef.current?.code !== g) setNameDialog({ mode: 'join', code: g, routeCode: routeMatch?.[1] ?? null });
+    }
+    if (shared) openShared(shared);
+  }
+
+  function openShared(shared: SharedRoute) {
+    {
       setBusy('Gedeelde route laden…');
       routeMany(
         [{ ...shared.start, type: 'break' }, ...shared.vias.map((v) => ({ ...v, type: 'through' as const })), { ...shared.end, type: 'break' }],
@@ -478,6 +520,135 @@ export default function App() {
     }
   };
 
+  // ------------------------------------------------------------ groepsrit
+  const currentShareCode = () =>
+    selected
+      ? encodeShare({
+          name: routeName(plan, selected),
+          mode: plan.mode,
+          start: selected.route.start,
+          end: selected.route.end,
+          vias: selected.route.vias,
+          prefs: plan.prefs,
+        })
+      : null;
+
+  const joinGroup = (code: string, name: string, host: boolean, routeCode: string | null) => {
+    groupRef.current?.leave();
+    updateSettings({ riderName: name });
+    const g = new GroupRide(code, name, host, routeCode, {
+      onRiders: setRiders,
+      onStatus: setGroupStatus,
+      onMessage: (m) => {
+        const q = QUICK[m.kind];
+        setToast(`${q.icon} ${m.name}: ${q.text}`);
+        speak(`${m.name} ${q.spoken}.`, true);
+      },
+      onRoute: (rc, from) => {
+        const who = ridersRef.current.find((r) => r.id === from)?.name ?? 'Een groepsgenoot';
+        setPendingRoute({ code: rc, from: who });
+        setToast(`${who} heeft een nieuwe route gedeeld`);
+      },
+    });
+    g.connect();
+    groupRef.current = g;
+    setGroup(g);
+    setRiders([]);
+    storeGroup({ code, host, routeCode, at: Date.now() });
+  };
+
+  const leaveGroup = () => {
+    groupRef.current?.leave();
+    groupRef.current = null;
+    setGroup(null);
+    setRiders([]);
+    setGroupSheet(false);
+    setPendingRoute(null);
+    storeGroup(null);
+  };
+
+  const inviteGroup = async () => {
+    if (!group) return;
+    const url = groupInviteUrl(group.code, group.routeCode);
+    const text = `Rij je mee? Groepsrit in MotoTrips (code ${group.code})`;
+    try {
+      if (navigator.share) await navigator.share({ title: 'Groepsrit', text, url });
+      else {
+        await navigator.clipboard.writeText(url);
+        setInviteNotice('Link gekopieerd');
+      }
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') {
+        prompt('Kopieer deze uitnodiging:', url);
+      }
+    }
+    setTimeout(() => setInviteNotice(null), 2500);
+  };
+
+  const sendQuick = (k: QuickKind) => {
+    groupRef.current?.sendMessage(k);
+    setToast(`${QUICK[k].icon} Verstuurd: ${QUICK[k].text}`);
+  };
+
+  // Na herladen automatisch terug in je groep
+  useEffect(() => {
+    const st = loadStoredGroup();
+    const name = getSettings().riderName;
+    if (st && name && groupRidesAvailable() && !groupCodeFromUrl()) joinGroup(st.code, name, st.host, st.routeCode);
+    return () => groupRef.current?.leave() as unknown as void;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Eigen positie delen zolang je in de groep zit en niet navigeert (de navigatie stuurt zelf)
+  useEffect(() => {
+    if (!group || nav || !navigator.geolocation) return;
+    const id = navigator.geolocation.watchPosition(
+      (p) => {
+        setMyLoc({ lat: p.coords.latitude, lon: p.coords.longitude });
+        group.sendPosition(
+          {
+            lat: p.coords.latitude,
+            lon: p.coords.longitude,
+            heading: p.coords.heading ?? 0,
+            speedKmh: (p.coords.speed ?? 0) * 3.6,
+            accuracy: p.coords.accuracy,
+          },
+          false,
+        );
+      },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 },
+    );
+    return () => navigator.geolocation.clearWatch(id);
+  }, [group, nav]);
+
+  const riderInfos: RiderInfo[] = useMemo(() => {
+    const me = navView?.position ?? myLoc;
+    const r = selected?.route;
+    let myAlong: number | null = null;
+    if (me && r) {
+      const pr = projectOnRoute(me, r.shape, r.cum);
+      if (pr && pr.offset < 300) myAlong = pr.along;
+    }
+    return riders.map((rd) => {
+      if (!rd.pos || !me) return { rider: rd, delta: null, straight: null };
+      let delta: number | null = null;
+      if (r && myAlong !== null) {
+        const pr = projectOnRoute(rd.pos, r.shape, r.cum);
+        if (pr && pr.offset < 300) delta = pr.along - myAlong;
+      }
+      return { rider: rd, delta, straight: Math.round(Math.hypot((rd.pos.lat - me.lat) * 111320, (rd.pos.lon - me.lon) * 111320 * Math.cos((me.lat * Math.PI) / 180))) };
+    });
+  }, [riders, navView, myLoc, selected]);
+
+  const mapRiders = useMemo(
+    () =>
+      riders
+        .filter((r) => r.pos)
+        .map((r) => ({ id: r.id, name: r.name, color: r.color, lat: r.pos!.lat, lon: r.pos!.lon, heading: r.pos!.heading, stale: isStale(r) })),
+    [riders],
+  );
+
   // ------------------------------------------------------------ kaart
   const mapCandidates = useMemo(() => {
     if (tab === 'rides' && selectedRide) return [{ id: 'ride', shape: rideTrack(selectedRide), kind: 'ride' as const }];
@@ -513,6 +684,7 @@ export default function App() {
         vias={resultsMode ? selected.route.vias : []}
         editable={resultsMode && !busy}
         pois={mapPois}
+        riders={mapRiders}
         fitKey={fitKey}
         centerOn={centerOn}
         nav={navView ? { ...navView, follow } : null}
@@ -587,6 +759,20 @@ export default function App() {
                 onOffline={makeOffline}
                 offline={(selected && offline[selected.id]) || { state: 'idle' }}
                 onImportGpx={importGpx}
+                inGroup={!!group}
+                onGroup={() => {
+                  if (!groupRidesAvailable()) {
+                    setToast('Samen rijden is nog niet ingesteld (server ontbreekt).');
+                    return;
+                  }
+                  if (group) {
+                    const rc = currentShareCode();
+                    if (rc) group.sendRoute(rc);
+                    storeGroup({ code: group.code, host: group.host, routeCode: rc, at: Date.now() });
+                    setGroupSheet(true);
+                    setToast('Route gedeeld met de groep');
+                  } else setNameDialog({ mode: 'start' });
+                }}
                 importing={importing}
                 hasRides={rides.length > 0}
                 details={
@@ -674,6 +860,57 @@ export default function App() {
         </div>
       )}
 
+      {group && !nav && <GroupChip count={riders.filter((r) => r.online).length} status={groupStatus} onClick={() => setGroupSheet(true)} />}
+
+      {groupSheet && group && (
+        <GroupSheet
+          code={group.code}
+          me={group.me.name}
+          infos={riderInfos}
+          status={groupStatus}
+          pendingRoute={pendingRoute}
+          canSendRoute={!!selected}
+          onInvite={inviteGroup}
+          inviteNotice={inviteNotice}
+          onSendRoute={() => {
+            const rc = currentShareCode();
+            if (!rc) return;
+            group.sendRoute(rc);
+            storeGroup({ code: group.code, host: group.host, routeCode: rc, at: Date.now() });
+            setToast('Route gedeeld met de groep');
+          }}
+          onLoadRoute={() => {
+            const s = pendingRoute && decodeShare(pendingRoute.code);
+            setPendingRoute(null);
+            setGroupSheet(false);
+            if (s) openShared(s);
+          }}
+          onQuick={sendQuick}
+          onLeave={leaveGroup}
+          onClose={() => setGroupSheet(false)}
+        />
+      )}
+
+      {nameDialog && (
+        <GroupNameDialog
+          mode={nameDialog.mode}
+          code={nameDialog.code}
+          initialName={settings.riderName}
+          onCancel={() => setNameDialog(null)}
+          onConfirm={(name) => {
+            const d = nameDialog;
+            setNameDialog(null);
+            if (d.mode === 'start') {
+              joinGroup(newGroupCode(), name, true, currentShareCode());
+              setGroupSheet(true);
+            } else if (d.code) {
+              joinGroup(d.code, name, false, d.routeCode ?? null);
+              setToast(`Je rijdt mee in groep ${d.code}`);
+            }
+          }}
+        />
+      )}
+
       {busy && <div className="busy-toast">{busy}</div>}
       {toast && !busy && <div className="busy-toast info">{toast}</div>}
 
@@ -688,6 +925,9 @@ export default function App() {
           fuelStops={nav.fuel}
           setFollow={setFollow}
           onView={setNavView}
+          riders={group ? riders : []}
+          onQuick={group ? sendQuick : undefined}
+          onFix={group ? (f) => group.sendPosition(f, true) : undefined}
           onExit={(ride) => {
             setNav(null);
             setNavView(null);
