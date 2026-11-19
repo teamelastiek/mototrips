@@ -4,6 +4,7 @@ import { clearOfflineMaps, offlineCacheSize } from '../lib/offline';
 import { getSettings, updateSettings, type AppSettings } from '../lib/settings';
 import { DEFAULT_SERVER, getServer, setServer } from '../lib/valhalla';
 import { isVoiceEnabled, setVoiceEnabled, speak, unlockVoice } from '../lib/voice';
+import { MicTest } from './MicTest';
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -26,12 +27,23 @@ export function Settings() {
     setS(getSettings());
   };
 
+  const [micTest, setMicTest] = useState(false);
+
   useEffect(() => {
     offlineCacheSize().then((x) => setOffline(x.tiles));
   }, []);
 
   return (
     <div className="settings">
+      {micTest && <MicTest onClose={() => setMicTest(false)} />}
+      <section className="field">
+        <h3>Helm-headset</h3>
+        <button className="secondary" onClick={() => setMicTest(true)}>
+          🎙️ Helm-microfoon testen
+        </button>
+        <p className="hint">Test of de microfoon van je helm-headset werkt via de app. Dit is de voorbereiding op praten met je maten tijdens een groepsrit.</p>
+      </section>
+
       <section className="field">
         <h3>Kaart</h3>
         <div className="segmented">
