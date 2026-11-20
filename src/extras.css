@@ -756,3 +756,73 @@
     left: 50%;
   }
 }
+
+/* ---------- Intercom ---------- */
+.intercom {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+.intercom.on {
+  border-color: var(--good);
+}
+.intercom-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.intercom-head h3 {
+  margin: 0 0 2px;
+  font-family: var(--font-cond);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 16px;
+}
+.intercom-head .primary,
+.intercom-head .secondary {
+  min-width: 72px;
+}
+.mute-btn.muted {
+  border-color: var(--danger);
+  color: #ffb3b3;
+}
+.peer-badge {
+  font-size: 14px;
+}
+.peer-badge.speaking {
+  animation: pulse 0.8s ease-in-out infinite;
+}
+.peer-badge.wait {
+  color: var(--warn);
+  font-weight: 800;
+}
+.peer-badge.bad {
+  color: var(--danger);
+  font-weight: 800;
+}
+.chip-ic {
+  margin-left: 2px;
+}
+/* Grote intercomknop tijdens navigeren: groen = open lijn, rood = gedempt */
+.round-btn.ic-btn {
+  font-size: 24px;
+}
+.round-btn.ic-btn.live {
+  background: #173a22;
+  border: 2px solid var(--good);
+}
+.round-btn.ic-btn.live.talking {
+  box-shadow: 0 0 0 5px rgba(124, 207, 85, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+.round-btn.ic-btn.muted {
+  background: #3a1717;
+  border: 2px solid var(--danger);
+}
+.quick-pop {
+  grid-template-columns: repeat(3, 1fr);
+}

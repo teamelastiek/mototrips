@@ -41,7 +41,27 @@ export function Settings() {
         <button className="secondary" onClick={() => setMicTest(true)}>
           🎙️ Helm-microfoon testen
         </button>
-        <p className="hint">Test of de microfoon van je helm-headset werkt via de app. Dit is de voorbereiding op praten met je maten tijdens een groepsrit.</p>
+        <p className="hint">Test of de microfoon van je helm-headset werkt via de app, voordat je de intercom in een groepsrit gebruikt.</p>
+      </section>
+
+      <section className="field">
+        <h3>Intercom (geavanceerd)</h3>
+        <p className="hint">
+          De intercom verbindt telefoons rechtstreeks. Sommige mobiele netwerken blokkeren dat; dan meldt de app "Intercom lukt niet". Vul in dat geval de gegevens van een
+          TURN-server in (bijv. gratis via Metered of Cloudflare). Iedereen in de groep moet dezelfde gegevens invullen.
+        </p>
+        <input
+          className="text-input"
+          placeholder="turn:server:3478 (meerdere scheiden met komma)"
+          value={s.turnUrl}
+          onChange={(e) => set({ turnUrl: e.target.value })}
+          spellCheck={false}
+          autoCapitalize="off"
+        />
+        <div className="actions-row">
+          <input className="text-input" placeholder="Gebruikersnaam" value={s.turnUser} onChange={(e) => set({ turnUser: e.target.value })} spellCheck={false} autoCapitalize="off" />
+          <input className="text-input" placeholder="Wachtwoord" type="password" value={s.turnPass} onChange={(e) => set({ turnPass: e.target.value })} autoComplete="off" />
+        </div>
       </section>
 
       <section className="field">

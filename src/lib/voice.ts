@@ -29,7 +29,7 @@ export function isVoiceEnabled() {
 
 // Eén gedeelde audiocontext voor korte signaaltonen
 let audio: AudioContext | null = null;
-function audioCtx(): AudioContext | null {
+export function audioCtx(): AudioContext | null {
   try {
     audio ??= new AudioContext();
     if (audio.state === 'suspended') audio.resume().catch(() => {});

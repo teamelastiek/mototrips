@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { distance, formatDistance, formatDuration, pointAlong, projectOnRoute } from '../lib/geo';
 import { isStale, QUICK, type QuickKind, type Rider } from '../lib/group';
-import { relLabel, type RiderInfo } from './GroupUI';
+import { PeerBadge, relLabel, type IntercomUI, type RiderInfo } from './GroupUI';
 import { RideRecorder, type RideRecord } from '../lib/logbook';
 import { Navigator, Simulator, type NavState } from '../lib/navigator';
 import type { Poi } from '../lib/overpass';
@@ -26,6 +26,7 @@ interface Props {
   onFix?: (f: { lat: number; lon: number; heading: number; speedKmh: number; accuracy?: number }) => void;
   riders?: Rider[];
   onQuick?: (k: QuickKind) => void;
+  intercom?: IntercomUI;
 }
 
 function streetOf(m?: { streets: string[]; instruction: string }) {
@@ -51,7 +52,7 @@ function chime() {
   }
 }
 
-export function NavigationView({ route, name, prefs, demo: startDemo, follow, fuelStops, setFollow, onView, onExit, onFix, riders = [], onQuick }: Props) {
+export function NavigationView({ route, name, prefs, demo: startDemo, follow, fuelStops, setFollow, onView, onExit, onFix, riders = [], onQuick, intercom }: Props) {
   const [quickOpen, setQuickOpen] = useState(false);
   const gapWarned = useRef(new Set<string>());
   const onFixRef = useRef(onFix);
@@ -308,7 +309,7 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
           {infos.slice(0, 5).map((i) => (
             <li key={i.rider.id} className={isStale(i.rider) ? 'stale' : ''}>
               <span className="rider-dot" style={{ background: i.rider.color }} />
-              <b>{i.rider.name}</b> <span>{relLabel(i)}</span>
+              <b>{i.rider.name}</b> <PeerBadge peer={intercom?.peers.find((p) => p.id === i.rider.id)} /> <span>{relLabel(i)}</span>
             </li>
           ))}
         </ul>
@@ -329,6 +330,18 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
               {QUICK[k].text}
             </button>
           ))}
+          {intercom?.on && (
+            <button
+              className="quick"
+              onClick={() => {
+                intercom.onToggle();
+                setQuickOpen(false);
+              }}
+            >
+              <span>📴</span>
+              Intercom uit
+            </button>
+          )}
         </div>
       )}
 
@@ -338,6 +351,17 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
         <button className="round-btn" onClick={toggleMute} title={muted ? 'Geluid aan' : 'Geluid uit'}>
           {muted ? <IconMute /> : <IconVolume />}
         </button>
+        {intercom && (
+          // Intercom uit: tik = aanzetten. Intercom aan: tik = microfoon dempen/aanzetten.
+          <button
+            className={`round-btn ic-btn ${intercom.on ? (intercom.muted ? 'muted' : 'live') : ''} ${intercom.localSpeaking ? 'talking' : ''}`}
+            onClick={intercom.on ? intercom.onMute : intercom.onToggle}
+            disabled={intercom.starting}
+            title={!intercom.on ? 'Intercom aanzetten' : intercom.muted ? 'Microfoon aanzetten' : 'Microfoon dempen'}
+          >
+            {intercom.starting ? '⋯' : !intercom.on ? '🎙️' : intercom.muted ? '🔇' : '🎙️'}
+          </button>
+        )}
         {onQuick && (
           <button className={`round-btn ${quickOpen ? 'accent' : ''}`} onClick={() => setQuickOpen(!quickOpen)} title="Bericht aan de groep">
             👥

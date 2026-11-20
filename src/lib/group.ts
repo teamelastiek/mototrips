@@ -28,6 +28,17 @@ export const QUICK: Record<QuickKind, { icon: string; text: string; spoken: stri
   go: { icon: '👍', text: 'Alles goed', spoken: 'zegt: alles goed' },
 };
 
+/** Berichten om een intercomverbinding op te zetten (WebRTC). */
+export interface Signal {
+  from: string;
+  to?: string;
+  type: 'hello' | 'here' | 'offer' | 'answer' | 'bye';
+  name?: string;
+  sdp?: string;
+  /** Eerste melding na (her)starten: bestaande verbinding is dan verouderd */
+  fresh?: boolean;
+}
+
 export interface GroupMessage {
   from: string;
   name: string;
@@ -83,7 +94,7 @@ let client: SupabaseClient | null = null;
 function getClient() {
   client ??= createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
-    realtime: { params: { eventsPerSecond: 5 } },
+    realtime: { params: { eventsPerSecond: 10 } },
   });
   return client;
 }
@@ -101,6 +112,7 @@ export class GroupRide {
   private heartbeat?: number;
   private staleTimer?: number;
   private left = false;
+  private signalHandler: ((s: Signal) => void) | null = null;
 
   constructor(code: string, name: string, host: boolean, routeCode: string | null, ev: GroupEvents) {
     this.code = code;
@@ -126,6 +138,11 @@ export class GroupRide {
     this.channel = ch;
 
     ch.on('broadcast', { event: 'pos' }, ({ payload }) => this.onPos(payload as PosPayload));
+    // Intercom: verbindingsgegevens tussen twee telefoons (alleen voor mij bedoeld)
+    ch.on('broadcast', { event: 'rtc' }, ({ payload }) => {
+      const s = payload as Signal;
+      if (s.from !== this.me.id && (!s.to || s.to === this.me.id)) this.signalHandler?.(s);
+    });
     ch.on('broadcast', { event: 'msg' }, ({ payload }) => {
       const m = payload as GroupMessage;
       if (m.from !== this.me.id) this.ev.onMessage(m);
@@ -225,6 +242,15 @@ export class GroupRide {
     if (!this.lastFix) return;
     this.lastSent = { p: { lat: this.lastFix.lat, lon: this.lastFix.lon }, t: Date.now() };
     this.broadcast('pos', this.lastFix);
+  }
+
+  /** Intercom-signalering versturen (aan één rijder, of aan iedereen zonder 'to'). */
+  sendSignal(s: Omit<Signal, 'from'>) {
+    this.broadcast('rtc', { ...s, from: this.me.id });
+  }
+
+  onSignal(fn: ((s: Signal) => void) | null) {
+    this.signalHandler = fn;
   }
 
   sendMessage(kind: QuickKind) {

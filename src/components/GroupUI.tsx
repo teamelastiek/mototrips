@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { formatDistance } from '../lib/geo';
 import { isStale, QUICK, type QuickKind, type Rider } from '../lib/group';
+import type { PeerInfo } from '../lib/intercom';
 import { IconClose, IconShare } from './Icons';
 
 /** Naam invullen bij starten of meedoen met een groepsrit. */
@@ -86,6 +87,7 @@ export function GroupSheet({
   onQuick,
   onLeave,
   onClose,
+  intercom,
 }: {
   code: string;
   me: string;
@@ -100,6 +102,7 @@ export function GroupSheet({
   onQuick: (k: QuickKind) => void;
   onLeave: () => void;
   onClose: () => void;
+  intercom: IntercomUI;
 }) {
   return (
     <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -128,6 +131,8 @@ export function GroupSheet({
           </div>
         )}
 
+        <IntercomPanel ic={intercom} />
+
         <ul className="riders">
           <li className="rider me">
             <span className="rider-dot" style={{ background: 'var(--accent)' }} />
@@ -137,6 +142,7 @@ export function GroupSheet({
             <li key={i.rider.id} className={`rider ${isStale(i.rider) ? 'stale' : ''}`}>
               <span className="rider-dot" style={{ background: i.rider.color }} />
               <strong>{i.rider.name}</strong>
+              <PeerBadge peer={intercom.peers.find((p) => p.id === i.rider.id)} />
               <span className="rider-rel">{relLabel(i)}</span>
               {i.rider.pos && !isStale(i.rider) && <span className="rider-speed">{i.rider.pos.speedKmh} km/u</span>}
             </li>
@@ -169,10 +175,71 @@ export function GroupSheet({
 }
 
 /** Kleine knop op de kaart zolang je in een groep zit. */
-export function GroupChip({ count, status, onClick }: { count: number; status: 'connecting' | 'connected' | 'error'; onClick: () => void }) {
+export function GroupChip({
+  count,
+  status,
+  intercom,
+  onClick,
+}: {
+  count: number;
+  status: 'connecting' | 'connected' | 'error';
+  intercom: 'on' | 'muted' | null;
+  onClick: () => void;
+}) {
   return (
     <button className={`group-chip ${status}`} onClick={onClick} title="Groepsrit">
       👥 <b>{count + 1}</b> <span>{count + 1 === 1 ? 'rijder' : 'rijders'}</span>
+      {intercom && <span className="chip-ic">{intercom === 'muted' ? '🔇' : '🎙️'}</span>}
     </button>
+  );
+}
+
+export interface IntercomUI {
+  on: boolean;
+  starting: boolean;
+  muted: boolean;
+  localSpeaking: boolean;
+  peers: PeerInfo[];
+  error: string | null;
+  onToggle: () => void;
+  onMute: () => void;
+}
+
+/** Klein icoon achter een naam: verbonden met de intercom, praat nu, of lukt niet. */
+export function PeerBadge({ peer }: { peer?: PeerInfo }) {
+  if (!peer) return null;
+  if (peer.state === 'connected') return <span className={`peer-badge ${peer.speaking ? 'speaking' : ''}`} title={peer.speaking ? 'Praat' : 'Intercom verbonden'}>{peer.speaking ? '🔊' : '🎧'}</span>;
+  if (peer.state === 'connecting') return <span className="peer-badge wait" title="Intercom verbinden…">⋯</span>;
+  return <span className="peer-badge bad" title="Intercom lukt niet">✕</span>;
+}
+
+function IntercomPanel({ ic }: { ic: IntercomUI }) {
+  const connected = ic.peers.filter((p) => p.state === 'connected').length;
+  return (
+    <section className={`intercom ${ic.on ? 'on' : ''}`}>
+      <div className="intercom-head">
+        <div>
+          <h3>🎙️ Intercom</h3>
+          <span className="hint">
+            {!ic.on
+              ? 'Praat met je maten via je helm-headset.'
+              : ic.muted
+                ? 'Je microfoon staat uit.'
+                : connected
+                  ? `Verbonden met ${connected} ${connected === 1 ? 'rijder' : 'rijders'}${ic.localSpeaking ? ' · jij praat' : ''}`
+                  : 'Wachten op je maten… (zij moeten de intercom ook aanzetten)'}
+          </span>
+        </div>
+        <button className={ic.on ? 'secondary' : 'primary'} onClick={ic.onToggle} disabled={ic.starting}>
+          {ic.starting ? 'Starten…' : ic.on ? 'Uit' : 'Aan'}
+        </button>
+      </div>
+      {ic.on && (
+        <button className={`secondary mute-btn ${ic.muted ? 'muted' : ''}`} onClick={ic.onMute}>
+          {ic.muted ? '🔇 Microfoon aanzetten' : '🎙️ Microfoon dempen'}
+        </button>
+      )}
+      {ic.error && <div className="notice warn">{ic.error}</div>}
+    </section>
   );
 }

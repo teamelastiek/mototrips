@@ -13,6 +13,10 @@ export interface AppSettings {
   groupGapKm: number;
   /** Groepsberichten hardop voorlezen in je helm */
   groupVoice: boolean;
+  /** Eigen TURN-server voor de intercom (voor mobiele netwerken die directe verbindingen blokkeren) */
+  turnUrl: string;
+  turnUser: string;
+  turnPass: string;
 }
 
 const KEY = 'mototrips.settings';
@@ -25,6 +29,9 @@ const DEFAULTS: AppSettings = {
   riderName: '',
   groupGapKm: 2,
   groupVoice: true,
+  turnUrl: '',
+  turnUser: '',
+  turnPass: '',
 };
 
 let cache: AppSettings | null = null;

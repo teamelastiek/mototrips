@@ -32,7 +32,8 @@ import {
   type Rider,
 } from './lib/group';
 import { announce } from './lib/voice';
-import { GroupChip, GroupNameDialog, GroupSheet, type RiderInfo } from './components/GroupUI';
+import { GroupChip, GroupNameDialog, GroupSheet, type IntercomUI, type RiderInfo } from './components/GroupUI';
+import { Intercom, type PeerInfo } from './lib/intercom';
 import { updateSettings } from './lib/settings';
 import { deleteSaved, loadPlanSettings, loadSaved, savePlanSettings, saveRoute, type SavedRoute } from './lib/storage';
 import { isDark, sunTimes } from './lib/sun';
@@ -584,6 +585,7 @@ export default function App() {
       : null;
 
   const joinGroup = (code: string, name: string, host: boolean, routeCode: string | null) => {
+    stopIntercom(false);
     groupRef.current?.leave();
     updateSettings({ riderName: name });
     const g = new GroupRide(code, name, host, routeCode, {
@@ -627,6 +629,7 @@ export default function App() {
   };
 
   const leaveGroup = () => {
+    stopIntercom(false);
     groupRef.current?.leave();
     groupRef.current = null;
     setGroup(null);
@@ -659,6 +662,86 @@ export default function App() {
     setToast(`${QUICK[k].icon} Verstuurd: ${QUICK[k].text}`);
     // Bevestiging in je helm, zodat je niet hoeft te kijken of het gelukt is
     sayGroup(`Verstuurd: ${QUICK[k].text.toLowerCase()}.`, false, false);
+  };
+
+  // ------------------------------------------------------------ intercom
+  const intercomRef = useRef<Intercom | null>(null);
+  const [icOn, setIcOn] = useState(false);
+  const [icStarting, setIcStarting] = useState(false);
+  const [icMuted, setIcMuted] = useState(false);
+  const [icPeers, setIcPeers] = useState<PeerInfo[]>([]);
+  const [icLocalSpeaking, setIcLocalSpeaking] = useState(false);
+  const [icError, setIcError] = useState<string | null>(null);
+
+  const stopIntercom = (say = true) => {
+    intercomRef.current?.stop();
+    intercomRef.current = null;
+    setIcOn(false);
+    setIcPeers([]);
+    setIcMuted(false);
+    setIcLocalSpeaking(false);
+    if (say) sayGroup('Intercom uit.', false, false);
+  };
+
+  const startIntercom = async () => {
+    const g = groupRef.current;
+    if (!g || intercomRef.current) return;
+    unlockVoice(); // via een tik: zo mag de telefoon geluid afspelen
+    setIcError(null);
+    setIcStarting(true);
+    const ic = new Intercom(g, {
+      onPeers: setIcPeers,
+      onLocalSpeaking: setIcLocalSpeaking,
+      onEvent: (kind, name) => {
+        if (kind === 'connected') sayGroup(`Intercom verbonden met ${name}.`);
+        else if (kind === 'left') sayGroup(`${name} heeft de intercom uitgezet.`);
+        else if (kind === 'lost') sayGroup(`Intercom met ${name} verbroken. Opnieuw verbinden…`);
+        else sayGroup(`Intercom met ${name} lukt niet.`);
+        if (kind === 'failed')
+          setIcError(
+            `De verbinding met ${name} lukt niet. Sommige mobiele netwerken blokkeren directe verbindingen; dan is een TURN-server nodig (zie Instellingen → Intercom).`,
+          );
+      },
+    });
+    intercomRef.current = ic;
+    try {
+      await ic.start();
+      setIcOn(true);
+      sayGroup('Intercom aan. Je maten horen je zodra ze de intercom ook aanzetten.', false, false);
+    } catch (e) {
+      intercomRef.current = null;
+      const err = e as DOMException;
+      setIcError(
+        err.name === 'NotAllowedError'
+          ? 'Geen toestemming voor de microfoon. Sta de microfoon toe in je browser en probeer opnieuw.'
+          : err.name === 'NotFoundError'
+            ? 'Geen microfoon gevonden. Staat je helm-headset aan en verbonden?'
+            : `Intercom starten mislukt: ${err.message}`,
+      );
+      sayGroup('Intercom starten mislukt.', false, false);
+    } finally {
+      setIcStarting(false);
+    }
+  };
+
+  const toggleIcMute = () => {
+    const ic = intercomRef.current;
+    if (!ic) return;
+    const m = !ic.muted;
+    ic.setMuted(m);
+    setIcMuted(m);
+    sayGroup(m ? 'Microfoon uit.' : 'Microfoon aan.', false, false);
+  };
+
+  const intercomUI: IntercomUI = {
+    on: icOn,
+    starting: icStarting,
+    muted: icMuted,
+    localSpeaking: icLocalSpeaking,
+    peers: icPeers,
+    error: icError,
+    onToggle: () => (icOn ? stopIntercom() : startIntercom()),
+    onMute: toggleIcMute,
   };
 
   // Na herladen automatisch terug in je groep
@@ -935,7 +1018,9 @@ export default function App() {
         </div>
       )}
 
-      {group && !nav && <GroupChip count={riders.filter((r) => r.online).length} status={groupStatus} onClick={() => setGroupSheet(true)} />}
+      {group && !nav && (
+        <GroupChip count={riders.filter((r) => r.online).length} status={groupStatus} intercom={icOn ? (icMuted ? 'muted' : 'on') : null} onClick={() => setGroupSheet(true)} />
+      )}
 
       {groupSheet && group && (
         <GroupSheet
@@ -963,6 +1048,7 @@ export default function App() {
           onQuick={sendQuick}
           onLeave={leaveGroup}
           onClose={() => setGroupSheet(false)}
+          intercom={intercomUI}
         />
       )}
 
@@ -1002,6 +1088,7 @@ export default function App() {
           onView={setNavView}
           riders={group ? riders : []}
           onQuick={group ? sendQuick : undefined}
+          intercom={group ? intercomUI : undefined}
           onFix={group ? (f) => group.sendPosition(f, true) : undefined}
           onExit={(ride) => {
             setNav(null);
