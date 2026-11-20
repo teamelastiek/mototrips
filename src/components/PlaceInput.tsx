@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { reverseGeocode, searchPlaces, type Place } from '../lib/geocode';
 import type { LatLng } from '../lib/geo';
 import { IconClose, IconLocate } from './Icons';
+import { LocationError, openLocationHelp, requestLocation } from '../lib/location';
 
 export interface NamedPoint extends LatLng {
   name: string;
@@ -17,14 +18,7 @@ interface Props {
 }
 
 export function getCurrentPosition(): Promise<LatLng> {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) return reject(new Error('Locatie wordt niet ondersteund in deze browser'));
-    navigator.geolocation.getCurrentPosition(
-      (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
-      (e) => reject(new Error(e.code === 1 ? 'Geen toestemming voor locatie' : 'Locatie niet beschikbaar')),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
-    );
-  });
+  return requestLocation();
 }
 
 export function PlaceInput({ label, marker, value, onChange, near, placeholder }: Props) {
@@ -33,6 +27,7 @@ export function PlaceInput({ label, marker, value, onChange, near, placeholder }
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [denied, setDenied] = useState(false);
   const editing = useRef(false);
 
   useEffect(() => {
@@ -62,13 +57,18 @@ export function PlaceInput({ label, marker, value, onChange, near, placeholder }
   const useMyLocation = async () => {
     setBusy(true);
     setErr(null);
+    setDenied(false);
     try {
-      const p = await getCurrentPosition();
+      const p = await requestLocation();
       editing.current = false;
       onChange({ ...p, name: 'Mijn locatie' });
       reverseGeocode(p).then((name) => onChange({ ...p, name: `Mijn locatie · ${name}` }));
     } catch (e) {
       setErr((e as Error).message);
+      if ((e as LocationError).denied) {
+        setDenied(true);
+        openLocationHelp();
+      }
     } finally {
       setBusy(false);
     }
@@ -108,7 +108,19 @@ export function PlaceInput({ label, marker, value, onChange, near, placeholder }
           <IconLocate size={20} className={busy ? 'spin' : ''} />
         </button>
       </div>
-      {err && <div className="field-error">{err}</div>}
+      {err && (
+        <div className="field-error">
+          {err}
+          {denied && (
+            <>
+              {' · '}
+              <button type="button" className="link-btn" onClick={openLocationHelp}>
+                Hoe zet ik dit aan?
+              </button>
+            </>
+          )}
+        </div>
+      )}
       {open && results.length > 0 && (
         <ul className="place-results">
           {results.map((r, i) => (

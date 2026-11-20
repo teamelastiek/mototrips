@@ -3,13 +3,14 @@ import { IconBike, IconBookmark, IconChevron, IconGear, IconLog } from './compon
 import { Logbook } from './components/Logbook';
 import { MapView, type MapHandle, type NavView } from './components/MapView';
 import { NavigationView } from './components/NavigationView';
-import { getCurrentPosition } from './components/PlaceInput';
+import { LocationGate, type GateMode } from './components/LocationGate';
 import { Planner, type PlanSettings } from './components/Planner';
 import { RouteDetails, stopSuggestions, type RouteExtras } from './components/RouteDetails';
 import { SavedList } from './components/SavedList';
 import { Settings } from './components/Settings';
 import { candidateFromRoute, generate, type Candidate } from './lib/generator';
 import { reverseGeocode } from './lib/geocode';
+import { locationState, requestLocation, watchLocationState, type LocationError } from './lib/location';
 import { projectOnRoute, type LatLng } from './lib/geo';
 import { downloadGpx, toGpx } from './lib/gpx';
 import { gpxToRoute, isLoop, parseGpx, pickGpxFile } from './lib/gpxImport';
@@ -92,6 +93,8 @@ export default function App() {
     setPlanState(p);
     savePlanSettings(p);
   };
+  const planRef = useRef(plan);
+  planRef.current = plan;
   const [tab, setTab] = useState<Tab>('plan');
   const [sheetOpen, setSheetOpen] = useState(true);
   const [settings, setSettings] = useState<AppSettings>(getSettings);
@@ -106,6 +109,7 @@ export default function App() {
   const [fitKey, setFitKey] = useState<number>();
   const [centerOn, setCenterOn] = useState<{ p: LatLng; key: number } | null>(null);
   const [myLoc, setMyLoc] = useState<LatLng | null>(null);
+  const [locGate, setLocGate] = useState<GateMode | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
   const [saved, setSaved] = useState<SavedRoute[]>(loadSaved);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
@@ -182,23 +186,38 @@ export default function App() {
 
   // ------------------------------------------------------------ opstarten
   useEffect(() => {
-    navigator.permissions
-      ?.query({ name: 'geolocation' as PermissionName })
-      .then((s) => {
-        if (s.state !== 'granted') return;
-        getCurrentPosition()
-          .then((p) => {
-            setMyLoc(p);
-            if (!plan.start) setCenterOn({ p, key: Date.now() });
-          })
-          .catch(() => {});
-      })
-      .catch(() => {});
+    // Locatie: al toegestaan → direct ophalen. Nog niet gevraagd of geweigerd → uitlegvenster.
+    const located = (p: LatLng) => {
+      setMyLoc(p);
+      setLocGate(null);
+      if (!planRef.current.start) setCenterOn({ p, key: Date.now() });
+    };
+    locationState().then((s) => {
+      if (s === 'granted') requestLocation().then(located).catch(() => {});
+      else if (s === 'prompt') setLocGate('ask');
+      else if (s === 'denied') setLocGate('denied');
+      // Geen permissions-API (oudere telefoons): gewoon proberen, bij weigeren uitleg tonen
+      else if (s === 'unknown')
+        requestLocation()
+          .then(located)
+          .catch((e) => (e as LocationError).denied && setLocGate('denied'));
+    });
+    const stopWatch = watchLocationState((s) => {
+      if (s === 'granted') requestLocation().then(located).catch(() => {});
+      else if (s === 'denied') setLocGate((g) => (g ? 'denied' : g));
+    });
+    const onHelp = () =>
+      locationState().then((s) => setLocGate(s === 'denied' ? 'denied' : 'ask'));
+    window.addEventListener('mototrips-location-help', onHelp);
 
     // Gedeelde route via link? (ook als de app al open stond)
     openSharedFromUrl();
     window.addEventListener('hashchange', openSharedFromUrl);
-    return () => window.removeEventListener('hashchange', openSharedFromUrl);
+    return () => {
+      window.removeEventListener('hashchange', openSharedFromUrl);
+      window.removeEventListener('mototrips-location-help', onHelp);
+      stopWatch();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1087,6 +1106,28 @@ export default function App() {
             } else if (d.code) {
               joinGroup(d.code, name, false, d.routeCode ?? null);
               setToast(`Je rijdt mee in groep ${d.code}`);
+            }
+          }}
+        />
+      )}
+
+      {locGate && (
+        <LocationGate
+          mode={locGate}
+          onClose={() => setLocGate(null)}
+          onLocated={(p) => {
+            setLocGate(null);
+            setMyLoc(p);
+            setCenterOn({ p, key: Date.now() });
+            // Nog geen vertrekpunt? Dan vanaf hier.
+            if (!nav && !planRef.current.start) {
+              setPlan({ ...planRef.current, start: { ...p, name: 'Mijn locatie' } });
+              reverseGeocode(p)
+                .then((name) => {
+                  const cur = planRef.current.start;
+                  if (cur && cur.lat === p.lat && cur.lon === p.lon) setPlan({ ...planRef.current, start: { ...p, name: `Mijn locatie · ${name}` } });
+                })
+                .catch(() => {});
             }
           }}
         />

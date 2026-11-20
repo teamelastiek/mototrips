@@ -7,6 +7,7 @@ import { Navigator, Simulator, type NavState } from '../lib/navigator';
 import type { Poi } from '../lib/overpass';
 import { getSettings } from '../lib/settings';
 import { speedLimits, type Route, type RoutePrefs } from '../lib/valhalla';
+import { openLocationHelp, watchLocationState } from '../lib/location';
 import { announce, isVoiceEnabled, setVoiceEnabled, speak } from '../lib/voice';
 import { IconClose, IconMute, IconPlay, IconRecenter, IconVolume } from './Icons';
 import { ManeuverIcon } from './ManeuverIcon';
@@ -59,6 +60,8 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
   onFixRef.current = onFix;
   const [state, setState] = useState<NavState | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
+  const [gpsDenied, setGpsDenied] = useState(false);
+  const [watchKey, setWatchKey] = useState(0);
   const [muted, setMuted] = useState(!isVoiceEnabled());
   const [demo, setDemo] = useState(startDemo);
   const [confirmStop, setConfirmStop] = useState(false);
@@ -132,6 +135,7 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
     const id = navigator.geolocation.watchPosition(
       (p) => {
         setGpsError(null);
+        setGpsDenied(false);
         const fix = {
           lat: p.coords.latitude,
           lon: p.coords.longitude,
@@ -147,16 +151,27 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
           setLean(rec.lean);
         }
       },
-      (e) =>
-        setGpsError(
-          e.code === 1
-            ? 'Geen toestemming voor je locatie. Sta locatie toe in je browserinstellingen.'
-            : 'Wachten op GPS-signaal…',
-        ),
+      (e) => {
+        setGpsDenied(e.code === 1);
+        setGpsError(e.code === 1 ? 'Geen toestemming voor je locatie.' : 'Wachten op GPS-signaal…');
+        if (e.code === 1) openLocationHelp();
+      },
       { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 },
     );
     return () => navigator.geolocation.clearWatch(id);
-  }, [demo]);
+  }, [demo, watchKey]);
+
+  // Locatie alsnog toegestaan? Dan de GPS opnieuw starten.
+  useEffect(() => {
+    if (!gpsDenied) return;
+    const retry = () => setWatchKey((k) => k + 1);
+    const stop = watchLocationState((s) => s === 'granted' && retry());
+    window.addEventListener('mototrips-location-granted', retry);
+    return () => {
+      stop();
+      window.removeEventListener('mototrips-location-granted', retry);
+    };
+  }, [gpsDenied]);
 
   // Scherm aan houden tijdens het rijden
   useEffect(() => {
@@ -399,6 +414,11 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
         </button>
       </div>
 
+      {!demo && gpsDenied && (
+        <button className="demo-btn loc-help-btn" onClick={openLocationHelp}>
+          Locatie aanzetten
+        </button>
+      )}
       {!demo && (!state || gpsError) && (
         <button className="demo-btn" onClick={() => setDemo(true)}>
           <IconPlay size={16} /> Geen GPS? Start demo-rit

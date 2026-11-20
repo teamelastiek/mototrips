@@ -862,3 +862,37 @@
   min-height: 34px;
   font-size: 13px;
 }
+
+/* ---------- Locatietoestemming ---------- */
+.loc-hero {
+  display: grid;
+  place-items: center;
+  width: 68px;
+  height: 68px;
+  margin: 2px auto 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.loc-text {
+  margin: 0;
+  line-height: 1.45;
+}
+.loc-text.muted,
+.loc-foot {
+  color: var(--muted);
+  font-size: 13.5px;
+}
+.loc-foot {
+  margin: 4px 0 0;
+}
+.loc-card .link-btn {
+  align-self: center;
+}
+.demo-btn.loc-help-btn {
+  bottom: calc(166px + env(safe-area-inset-bottom));
+  margin-top: 0;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
