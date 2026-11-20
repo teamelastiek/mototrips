@@ -27,6 +27,19 @@ export function timeAtAlong(r: Route, along: number): number {
   return t;
 }
 
+/** Waar je bent (m langs de route) na een bepaalde rijtijd in seconden. */
+export function alongAtTime(r: Route, seconds: number): number {
+  let t = 0;
+  for (const m of r.maneuvers) {
+    if (t + m.timeS >= seconds) {
+      const f = m.timeS > 0 ? (seconds - t) / m.timeS : 0;
+      return Math.min(r.lengthM, m.at + m.lengthM * Math.max(0, f));
+    }
+    t += m.timeS;
+  }
+  return r.lengthM;
+}
+
 export async function weatherAlongRoute(r: Route, departure: Date, signal?: AbortSignal): Promise<WeatherPoint[]> {
   const total = r.cum[r.cum.length - 1];
   const n = Math.min(10, Math.max(3, Math.round(total / 25000) + 1));

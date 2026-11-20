@@ -15,7 +15,7 @@ import { downloadGpx, toGpx } from './lib/gpx';
 import { gpxToRoute, isLoop, parseGpx, pickGpxFile } from './lib/gpxImport';
 import { deleteRide, loadRides, rideTrack, type RideRecord } from './lib/logbook';
 import { downloadRouteMap } from './lib/offline';
-import { poisAlongRoute, type Poi } from './lib/overpass';
+import { poiIcon, poisAlongRoute, type Poi } from './lib/overpass';
 import { getSettings, onSettings, type AppSettings } from './lib/settings';
 import { decodeShare, encodeShare, shareRoute, takeSharedFromUrl, type SharedRoute } from './lib/share';
 import { groupRidesAvailable } from './lib/config';
@@ -836,11 +836,10 @@ export default function App() {
     if (selectedRide) setFitKey(Date.now());
   }, [selectedRide]);
 
-  const mapPois = useMemo(() => {
-    if (!suggestions || !showResults || tab !== 'plan') return [];
-    const seen = new Set<number>();
-    return [...suggestions.fuelList, ...suggestions.pauseList].filter((p) => !seen.has(p.id) && seen.add(p.id));
-  }, [suggestions, showResults, tab]);
+  // De kaart toont dezelfde plekken als het open paneel (tanken, pauze of eigen stop)
+  const [panelPois, setPanelPois] = useState<Poi[]>([]);
+  const onShowPois = useCallback((p: Poi[]) => setPanelPois(p), []);
+  const mapPois = showResults && tab === 'plan' ? panelPois : [];
 
   const padding = useMemo(() => {
     if (nav) return { top: 0, bottom: 110, left: 0, right: 0 };
@@ -965,6 +964,7 @@ export default function App() {
                       onAddStop={addVia}
                       onFocus={(p) => setCenterOn({ p, key: Date.now() })}
                       onRetry={(what) => loadExtra(selected, what, departure)}
+                      onShowPois={onShowPois}
                     />
                   ) : null
                 }
@@ -1028,7 +1028,7 @@ export default function App() {
           {menu.kind === 'poi' && (
             <>
               <div className="menu-title">
-                {menu.poi.kind === 'fuel' ? '⛽' : menu.poi.kind === 'cafe' ? '☕' : '🍽️'} {menu.poi.name}
+                {poiIcon(menu.poi.kind)} {menu.poi.name}
                 {menu.poi.opening && <small>{menu.poi.opening}</small>}
               </div>
               <button onClick={() => addVia(menu.poi)}>+ Als stop toevoegen</button>

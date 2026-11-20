@@ -4,6 +4,8 @@ import type { LatLng } from './geo';
 export interface Place extends LatLng {
   name: string;
   detail: string;
+  /** OpenStreetMap-soort, bijv. "fuel", "cafe", "restaurant" */
+  category?: string;
 }
 
 interface PhotonFeature {
@@ -33,6 +35,7 @@ export async function searchPlaces(q: string, near?: LatLng, signal?: AbortSigna
   return (data.features as PhotonFeature[]).map((f) => ({
     lon: f.geometry.coordinates[0],
     lat: f.geometry.coordinates[1],
+    category: f.properties.osm_value,
     ...describe(f.properties),
   }));
 }

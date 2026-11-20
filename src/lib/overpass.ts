@@ -1,10 +1,12 @@
 // Plekken langs de route uit OpenStreetMap: tankstations, cafés/restaurants en steden.
-// Eerst via Photon (snel en betrouwbaar, dezelfde dienst als het adressen zoeken);
-// lukt dat niet, dan via Overpass als reserve. Alles gratis en zonder sleutel.
+// Eerst één lichte Overpass-vraag; lukt dat niet, dan een paar kleine Photon-vragen.
+// Alles gratis en zonder sleutel, en zuinig zodat de servers ons niet blokkeren.
 import { distance, pointAlong, projectOnRoute, resample, type LatLng } from './geo';
 import type { Route } from './valhalla';
 
-export type PoiKind = 'fuel' | 'cafe' | 'restaurant';
+export type PoiKind = 'fuel' | 'cafe' | 'restaurant' | 'place';
+
+export const poiIcon = (k: PoiKind) => (k === 'fuel' ? '⛽' : k === 'cafe' ? '☕' : k === 'restaurant' ? '🍽️' : '📍');
 
 export interface Poi extends LatLng {
   id: number;
@@ -71,25 +73,49 @@ async function photonNear(p: LatLng, radiusKm: number, tags: string[], limit: nu
   return ((await res.json()).features ?? []) as PhotonFeature[];
 }
 
-async function poisViaPhoton(r: Route, signal?: AbortSignal): Promise<Poi[]> {
-  const total = r.lengthM;
-  const samples = (from: number, to: number, step: number) => {
-    const out: LatLng[] = [];
-    for (let a = from; a <= to; a += step) out.push(pointAlong(r.shape, r.cum, a).point);
-    if (!out.length) out.push(pointAlong(r.shape, r.cum, (from + to) / 2).point);
-    return out;
+/** Wat we zoeken: tankstations, of iets om te eten/drinken. */
+export type Want = 'fuel' | 'food';
+
+const KIND_OF: Record<string, PoiKind | undefined> = { fuel: 'fuel', cafe: 'cafe', restaurant: 'restaurant', fast_food: 'restaurant' };
+const MAX_OFFSET: Record<Want, number> = { fuel: 900, food: 600 };
+
+function toPoi(r: Route, id: number, value: string, p: LatLng, tags: { name?: string; brand?: string; opening?: string }, want: Want): Poi | null {
+  const kind = KIND_OF[value];
+  if (!kind || (want === 'fuel') !== (kind === 'fuel')) return null;
+  const proj = projectOnRoute(p, r.shape, r.cum);
+  // Alleen wat echt langs de route ligt
+  if (!proj || proj.offset > MAX_OFFSET[want]) return null;
+  return {
+    id,
+    kind,
+    ...p,
+    name: tags.name || tags.brand || (kind === 'fuel' ? 'Tankstation' : kind === 'cafe' ? 'Café' : 'Restaurant'),
+    brand: tags.brand,
+    opening: tags.opening,
+    along: proj.along,
+    offset: proj.offset,
   };
-  // Zuinig met de gratis server: hooguit 5 zoekpunten voor tanken en 3 voor eten/drinken
-  // (rond de helft van de rit, daar zoek je een pauze), nooit meer dan 2 tegelijk.
-  const fuelPts = samples(0, total, Math.max(8000, total / 4));
-  const foodFrom = total > 60000 ? total * 0.35 : 0;
-  const foodTo = total > 60000 ? total * 0.65 : total;
-  const foodPts = samples(foodFrom, foodTo, Math.max(3000, (foodTo - foodFrom) / 2));
-  const jobs = [
-    ...fuelPts.slice(0, 5).map((p) => () => photonNear(p, 5, ['amenity:fuel'], 20, signal)),
-    ...foodPts.slice(0, 3).map((p) => () => photonNear(p, 3, ['amenity:cafe', 'amenity:restaurant'], 20, signal)),
-  ];
-  // Eerst één vraag als proef: reageert de server niet, dan meteen stoppen (niet 8× wachten)
+}
+
+/** Punten langs (een stuk van) de route. */
+function samplesAlong(r: Route, from: number, to: number, step: number): LatLng[] {
+  const out: LatLng[] = [];
+  for (let a = from; a <= to; a += step) out.push(pointAlong(r.shape, r.cum, a).point);
+  out.push(pointAlong(r.shape, r.cum, to).point);
+  return out;
+}
+
+async function viaPhoton(r: Route, want: Want, from: number, to: number, signal?: AbortSignal): Promise<Poi[]> {
+  // Zuinig met de gratis server: hooguit 5 zoekpunten, nooit meer dan 2 tegelijk
+  const len = to - from;
+  const pts = samplesAlong(r, from, to, Math.max(want === 'fuel' ? 8000 : 3000, len / 4)).slice(0, 5);
+  const jobs = pts.map(
+    (p) => () =>
+      want === 'fuel'
+        ? photonNear(p, 5, ['amenity:fuel'], 20, signal)
+        : photonNear(p, 3, ['amenity:cafe', 'amenity:restaurant', 'amenity:fast_food'], 20, signal),
+  );
+  // Eerst één vraag als proef: reageert de server niet, dan meteen stoppen (niet 5× wachten)
   const first = await pool(jobs.slice(0, 1), 1);
   if (signal?.aborted) throw new DOMException('Afgebroken', 'AbortError');
   if (first[0].status === 'rejected') throw new Error(UNAVAILABLE);
@@ -105,28 +131,14 @@ async function poisViaPhoton(r: Route, signal?: AbortSignal): Promise<Poi[]> {
       const key = `${pr.osm_type}${pr.osm_id}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const kind = pr.osm_value as PoiKind;
-      if (kind !== 'fuel' && kind !== 'cafe' && kind !== 'restaurant') continue;
-      const p = { lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0] };
-      const proj = projectOnRoute(p, r.shape, r.cum);
-      // Alleen wat echt langs de route ligt
-      if (!proj || proj.offset > (kind === 'fuel' ? 800 : 500)) continue;
-      out.push({
-        id: pr.osm_id,
-        kind,
-        ...p,
-        name: pr.name || pr.brand || (kind === 'fuel' ? 'Tankstation' : kind === 'cafe' ? 'Café' : 'Restaurant'),
-        brand: pr.brand,
-        along: proj.along,
-        offset: proj.offset,
-      });
+      const poi = toPoi(r, pr.osm_id, pr.osm_value, { lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0] }, pr, want);
+      if (poi) out.push(poi);
     }
   }
-  out.sort((a, b) => a.along - b.along);
-  return out;
+  return out.sort((a, b) => a.along - b.along);
 }
 
-// ---------------------------------------------------------------- Overpass (reserve)
+// ---------------------------------------------------------------- Overpass
 
 interface OsmElement {
   type: string;
@@ -138,10 +150,7 @@ interface OsmElement {
 }
 
 // Publieke Overpass-servers zijn soms overbelast: probeer ze na elkaar, met een korte tijdslimiet
-const OVERPASS = [
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass-api.de/api/interpreter',
-];
+const OVERPASS = ['https://overpass.kumi.systems/api/interpreter', 'https://overpass-api.de/api/interpreter'];
 
 async function overpass(q: string, signal?: AbortSignal): Promise<OsmElement[]> {
   for (const ep of OVERPASS) {
@@ -158,56 +167,38 @@ async function overpass(q: string, signal?: AbortSignal): Promise<OsmElement[]> 
   throw new Error(UNAVAILABLE);
 }
 
-async function poisViaOverpass(r: Route, signal?: AbortSignal): Promise<Poi[]> {
-  // Lichte zoekvraag: route vereenvoudigd tot ±1 punt per 3 km (max. 100 punten),
-  // alleen punten en gebouwen (geen grote relaties)
-  const step = Math.max(3000, r.lengthM / 100);
-  const line = resample(r.shape, step);
-  line.push(r.shape[r.shape.length - 1]);
-  const pl = line.map((p) => `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`).join(',');
-  const els = await overpass(
-    `[out:json][timeout:20];(nw(around:900,${pl})[amenity=fuel];nw(around:600,${pl})[amenity~"^(cafe|restaurant)$"];);out center tags qt 400;`,
-    signal,
-  );
+async function viaOverpass(r: Route, want: Want, from: number, to: number, signal?: AbortSignal): Promise<Poi[]> {
+  // Lichte zoekvraag: het stuk route vereenvoudigd tot hooguit ±100 punten
+  const pts = samplesAlong(r, from, to, Math.max(want === 'fuel' ? 3000 : 1000, (to - from) / 100));
+  const pl = pts.map((p) => `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`).join(',');
+  const filter = want === 'fuel' ? '[amenity=fuel]' : '[amenity~"^(cafe|restaurant|fast_food)$"]';
+  const els = await overpass(`[out:json][timeout:20];nw(around:${MAX_OFFSET[want]},${pl})${filter};out center tags qt 300;`, signal);
   const out: Poi[] = [];
   for (const el of els) {
     const lat = el.lat ?? el.center?.lat;
     const lon = el.lon ?? el.center?.lon;
     if (lat === undefined || lon === undefined) continue;
     const t = el.tags ?? {};
-    const kind = t.amenity as PoiKind;
-    if (kind !== 'fuel' && kind !== 'cafe' && kind !== 'restaurant') continue;
-    const proj = projectOnRoute({ lat, lon }, r.shape, r.cum);
-    if (!proj) continue;
-    out.push({
-      id: el.id,
-      kind,
-      lat,
-      lon,
-      name: t.name || t.brand || (kind === 'fuel' ? 'Tankstation' : kind === 'cafe' ? 'Café' : 'Restaurant'),
-      brand: t.brand,
-      opening: t.opening_hours,
-      along: proj.along,
-      offset: proj.offset,
-    });
+    const poi = toPoi(r, el.id, t.amenity ?? '', { lat, lon }, { name: t.name, brand: t.brand, opening: t.opening_hours }, want);
+    if (poi) out.push(poi);
   }
-  out.sort((a, b) => a.along - b.along);
-  return out;
+  return out.sort((a, b) => a.along - b.along);
 }
 
-/**
- * Tankstations, cafés en restaurants vlak langs de route.
- * Eerst één lichte Overpass-vraag; lukt dat niet, dan een paar kleine Photon-vragen.
- */
-export async function poisAlongRoute(r: Route, signal?: AbortSignal): Promise<Poi[]> {
+/** Plekken langs een stuk van de route (van/tot in meters langs de route). */
+export async function placesAlong(r: Route, want: Want, from = 0, to = r.lengthM, signal?: AbortSignal): Promise<Poi[]> {
+  from = Math.max(0, from);
+  to = Math.min(r.lengthM, Math.max(to, from + 1000));
   try {
-    const viaOverpass = (await poisViaOverpass(r, signal)).filter((p) => p.offset <= (p.kind === 'fuel' ? 900 : 600));
-    return viaOverpass;
+    return await viaOverpass(r, want, from, to, signal);
   } catch (e) {
     if (signal?.aborted) throw e;
-    return poisViaPhoton(r, signal);
+    return viaPhoton(r, want, from, to, signal);
   }
 }
+
+/** Alle tankstations langs de route. */
+export const poisAlongRoute = (r: Route, signal?: AbortSignal) => placesAlong(r, 'fuel', 0, r.lengthM, signal);
 
 // ---------------------------------------------------------------- steden
 

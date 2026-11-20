@@ -3,7 +3,7 @@ import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { cumulative, type LatLng } from '../lib/geo';
-import type { Poi } from '../lib/overpass';
+import { poiIcon, type Poi } from '../lib/overpass';
 
 // MapLibre zoekt zijn worker naast het eigen bestand; via Vite moet dat expliciet.
 maplibregl.setWorkerUrl(new URL(workerUrl, window.location.href).href);
@@ -453,7 +453,7 @@ export function MapView(props: Props) {
     m.pois = (props.navActive ? [] : props.pois ?? []).map((poi) => {
       const el = document.createElement('button');
       el.className = `poi-pin ${poi.kind}`;
-      el.textContent = poi.kind === 'fuel' ? '⛽' : poi.kind === 'cafe' ? '☕' : '🍽️';
+      el.textContent = poiIcon(poi.kind);
       el.title = poi.name;
       el.addEventListener('click', (ev) => {
         ev.stopPropagation();
