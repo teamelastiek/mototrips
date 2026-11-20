@@ -896,3 +896,38 @@
   color: var(--text);
   border: 1px solid var(--line);
 }
+
+/* ---------- Rit hervat ---------- */
+.resume-tap {
+  position: fixed;
+  left: 50%;
+  bottom: calc(232px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 20;
+  width: min(340px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 14px 18px;
+  border-radius: 18px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  animation: resume-pulse 1.6s ease-in-out infinite;
+}
+.resume-tap b {
+  font-family: var(--font-cond);
+  text-transform: uppercase;
+  font-size: 20px;
+  letter-spacing: 0.03em;
+}
+.resume-tap span {
+  font-size: 14px;
+  font-weight: 600;
+}
+@keyframes resume-pulse {
+  50% {
+    transform: translateX(-50%) scale(1.03);
+  }
+}

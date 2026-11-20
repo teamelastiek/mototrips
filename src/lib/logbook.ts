@@ -27,6 +27,16 @@ export interface RecorderFix extends LatLng {
 const G = 9.81;
 
 /** Neemt een rit op en schat de hellingshoek uit snelheid en draaisnelheid. */
+export interface RecorderSnapshot {
+  track: LatLng[];
+  distanceM: number;
+  movingS: number;
+  maxKmh: number;
+  maxLeanLeft: number;
+  maxLeanRight: number;
+  startedAt: number;
+}
+
 export class RideRecorder {
   private track: LatLng[] = [];
   private last?: RecorderFix;
@@ -39,7 +49,32 @@ export class RideRecorder {
   maxLeanRight = 0;
   /** Huidige geschatte hellingshoek (graden, + = rechts, - = links) */
   lean = 0;
-  readonly startedAt = Date.now();
+  startedAt = Date.now();
+
+  /** Tussenstand om na het heropenen van de app verder te kunnen. */
+  snapshot(): RecorderSnapshot {
+    return {
+      track: this.track.map((p) => ({ lat: +p.lat.toFixed(6), lon: +p.lon.toFixed(6) })),
+      distanceM: this.distanceM,
+      movingS: this.movingS,
+      maxKmh: this.maxKmh,
+      maxLeanLeft: this.maxLeanLeft,
+      maxLeanRight: this.maxLeanRight,
+      startedAt: this.startedAt,
+    };
+  }
+
+  static restore(s: RecorderSnapshot): RideRecorder {
+    const r = new RideRecorder();
+    r.track = s.track ?? [];
+    r.distanceM = s.distanceM ?? 0;
+    r.movingS = s.movingS ?? 0;
+    r.maxKmh = s.maxKmh ?? 0;
+    r.maxLeanLeft = s.maxLeanLeft ?? 0;
+    r.maxLeanRight = s.maxLeanRight ?? 0;
+    r.startedAt = s.startedAt ?? Date.now();
+    return r;
+  }
 
   add(f: RecorderFix) {
     if (f.accuracy !== undefined && f.accuracy > 40) return; // te onnauwkeurig

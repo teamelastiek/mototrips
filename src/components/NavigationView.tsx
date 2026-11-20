@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { distance, formatDistance, formatDuration, projectOnRoute } from '../lib/geo';
 import { isStale, QUICK, type QuickKind, type Rider } from '../lib/group';
 import { PeerBadge, relLabel, type IntercomUI, type RiderInfo } from './GroupUI';
-import { RideRecorder, type RideRecord } from '../lib/logbook';
+import { RideRecorder, type RecorderSnapshot, type RideRecord } from '../lib/logbook';
+import { clearActiveRide, saveRideRoute, updateActiveRide } from '../lib/activeRide';
 import { Navigator, Simulator, type NavState } from '../lib/navigator';
 import type { Poi } from '../lib/overpass';
 import { getSettings } from '../lib/settings';
@@ -28,6 +29,8 @@ interface Props {
   riders?: Rider[];
   onQuick?: (k: QuickKind) => void;
   intercom?: IntercomUI;
+  /** Hervatte rit (na het opnieuw openen van de app) */
+  resume?: { along: number; recorder?: RecorderSnapshot };
 }
 
 function streetOf(m?: { streets: string[]; instruction: string }) {
@@ -53,7 +56,7 @@ function chime() {
   }
 }
 
-export function NavigationView({ route, name, prefs, demo: startDemo, follow, fuelStops, setFollow, onView, onExit, onFix, riders = [], onQuick, intercom }: Props) {
+export function NavigationView({ route, name, prefs, demo: startDemo, follow, fuelStops, setFollow, onView, onExit, onFix, riders = [], onQuick, intercom, resume }: Props) {
   const [quickOpen, setQuickOpen] = useState(false);
   const gapWarned = useRef(new Set<string>());
   const onFixRef = useRef(onFix);
@@ -64,10 +67,13 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
   const [watchKey, setWatchKey] = useState(0);
   const [muted, setMuted] = useState(!isVoiceEnabled());
   const [demo, setDemo] = useState(startDemo);
+  const demoRef = useRef(startDemo);
+  demoRef.current = demo;
   const [confirmStop, setConfirmStop] = useState(false);
   const [lean, setLean] = useState(0);
   const navRef = useRef<Navigator | null>(null);
   const routeRef = useRef(route);
+  const alongRef = useRef(resume?.along ?? 0);
   const followRef = useRef(follow);
   followRef.current = follow;
   const recorderRef = useRef<RideRecorder | null>(null);
@@ -87,6 +93,7 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
     const nav = new Navigator(route, prefs, {
       onState: (s) => {
         setState(s);
+        alongRef.current = s.along;
         onFixRef.current?.({ lat: s.raw.lat, lon: s.raw.lon, heading: s.heading, speedKmh: s.speedKmh, accuracy: s.accuracy });
         // Alleen positie en voortgang doorgeven; de routelijn zelf staat al op de kaart
         onView({
@@ -105,10 +112,11 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
       },
       onRoute: (r) => {
         routeRef.current = r;
+        if (!demoRef.current) saveRideRoute(r);
         loadLimits(r);
       },
       speak: (t, p) => speak(t, p),
-    });
+    }, resume?.along ?? 0);
     navRef.current = nav;
     loadLimits(route);
     return () => {
@@ -131,7 +139,7 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
       setGpsError('Deze browser ondersteunt geen GPS-locatie.');
       return;
     }
-    recorderRef.current ??= getSettings().recordRides ? new RideRecorder() : null;
+    recorderRef.current ??= !getSettings().recordRides ? null : resume?.recorder ? RideRecorder.restore(resume.recorder) : new RideRecorder();
     const id = navigator.geolocation.watchPosition(
       (p) => {
         setGpsError(null);
@@ -172,6 +180,30 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
       window.removeEventListener('mototrips-location-granted', retry);
     };
   }, [gpsDenied]);
+
+  // Rit bewaren, zodat je na het afsluiten van de app verder kunt waar je was
+  useEffect(() => {
+    if (demo) {
+      clearActiveRide();
+      return;
+    }
+    saveRideRoute(routeRef.current);
+    const save = () => updateActiveRide({ along: alongRef.current, recorder: recorderRef.current?.snapshot() });
+    const t = setInterval(save, 30000);
+    const onHide = () => document.visibilityState === 'hidden' && save();
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', save);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', save);
+    };
+  }, [demo]);
+
+  // Aangekomen: niets meer te hervatten
+  useEffect(() => {
+    if (state?.arrived) clearActiveRide();
+  }, [state?.arrived]);
 
   // Scherm aan houden tijdens het rijden
   useEffect(() => {

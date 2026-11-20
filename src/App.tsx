@@ -10,6 +10,8 @@ import { SavedList } from './components/SavedList';
 import { Settings } from './components/Settings';
 import { candidateFromRoute, generate, type Candidate } from './lib/generator';
 import { reverseGeocode } from './lib/geocode';
+import { clearActiveRide, loadActiveRide, startActiveRide, updateActiveRide, type ActiveRide } from './lib/activeRide';
+import type { RecorderSnapshot } from './lib/logbook';
 import { locationState, requestLocation, watchLocationState, type LocationError } from './lib/location';
 import { projectOnRoute, type LatLng } from './lib/geo';
 import { downloadGpx, toGpx } from './lib/gpx';
@@ -142,7 +144,33 @@ export default function App() {
   const [pendingRoute, setPendingRoute] = useState<{ code: string; from: string } | null>(null);
   const [inviteNotice, setInviteNotice] = useState<string | null>(null);
 
-  const [nav, setNav] = useState<{ route: Route; demo: boolean; name: string; fuel: Poi[] } | null>(null);
+  // Route die we van de groep al hebben (dan geen "nieuwe route"-melding als hij opnieuw binnenkomt)
+  const knownRouteRef = useRef<string | null>(null);
+
+  // Lopende rit van vóór het afsluiten van de app? Dan gaan we daar meteen mee verder.
+  const resumeAtStart = useRef<ActiveRide | null | undefined>(undefined);
+  if (resumeAtStart.current === undefined) {
+    const ride = loadActiveRide();
+    const g = urlGroupAtStart.current;
+    // Een link naar een andere groep of een losse gedeelde route gaat voor
+    const other = g ? g !== loadStoredGroup()?.code : /[#&]r=/.test(location.hash);
+    resumeAtStart.current = ride && !other ? ride : null;
+    if (ride && other) clearActiveRide();
+  }
+  const [nav, setNav] = useState<{
+    route: Route;
+    demo: boolean;
+    name: string;
+    fuel: Poi[];
+    resume?: { along: number; recorder?: RecorderSnapshot };
+  } | null>(() => {
+    const r = resumeAtStart.current;
+    return r ? { route: r.route, demo: false, name: r.name, fuel: r.fuel, resume: { along: r.along, recorder: r.recorder } } : null;
+  });
+  // Na hervatten: eerste tik zet geluid (en zo nodig de intercom) weer aan; dat mag pas na een tik.
+  const [needTap, setNeedTap] = useState<{ intercom: boolean } | null>(() =>
+    resumeAtStart.current ? { intercom: resumeAtStart.current.intercom } : null,
+  );
   // De kaart krijgt navigatie-updates rechtstreeks (zonder de hele app opnieuw op te bouwen);
   // de eigen positie voor de groepslijst wordt maar eens per 5 s bijgewerkt.
   const mapApi = useRef<MapHandle>(null);
@@ -210,6 +238,8 @@ export default function App() {
       locationState().then((s) => setLocGate(s === 'denied' ? 'denied' : 'ask'));
     window.addEventListener('mototrips-location-help', onHelp);
 
+    // Rit hervat via de uitnodigingslink van de eigen groep? Dan de route uit de link niet opnieuw openen.
+    if (resumeAtStart.current && urlGroupAtStart.current) history.replaceState(null, '', `${location.pathname}#g=${urlGroupAtStart.current}`);
     // Gedeelde route via link? (ook als de app al open stond)
     openSharedFromUrl();
     window.addEventListener('hashchange', openSharedFromUrl);
@@ -448,12 +478,11 @@ export default function App() {
     if (!selected) return;
     unlockVoice(); // iOS: spraak moet vanuit een tik worden gestart
     setFollow(true);
-    setNav({
-      route: selected.route,
-      demo,
-      name: routeName(plan, selected),
-      fuel: suggestions?.allFuel.filter((p) => p.offset < 500) ?? [],
-    });
+    const name = routeName(plan, selected);
+    const fuel = suggestions?.allFuel.filter((p) => p.offset < 500) ?? [];
+    setNeedTap(null);
+    if (!demo) startActiveRide({ name, fuel, intercom: icOn });
+    setNav({ route: selected.route, demo, name, fuel });
   };
 
   const onMapClick = (p: LatLng, screen: { x: number; y: number }) => {
@@ -626,6 +655,7 @@ export default function App() {
     stopIntercom(false);
     groupRef.current?.leave();
     updateSettings({ riderName: name });
+    knownRouteRef.current = routeCode;
     const g = new GroupRide(code, name, host, routeCode, {
       onRiders: (list) => {
         setRiders(list);
@@ -649,6 +679,8 @@ export default function App() {
         sayGroup(`${m.name} ${q.spoken}.`, m.kind === 'trouble');
       },
       onRoute: (rc, from) => {
+        // Dezelfde route die we al hebben (bijv. opnieuw gestuurd na herverbinden): niets melden
+        if (rc === knownRouteRef.current) return;
         const who = ridersRef.current.find((r) => r.id === from)?.name ?? 'Een groepsgenoot';
         setPendingRoute({ code: rc, from: who });
         setToast(`${who} heeft een nieuwe route gedeeld`);
@@ -782,12 +814,41 @@ export default function App() {
     onMute: toggleIcMute,
   };
 
+  // Intercom aan/uit onthouden voor als de app tussendoor wordt afgesloten
+  useEffect(() => {
+    if (nav && !nav.demo && !needTap) updateActiveRide({ intercom: icOn });
+  }, [icOn, nav, needTap]);
+
+  // Hervatte rit: de telefoon laat pas geluid en microfoon toe na een tik. De eerste tik waar dan ook doet dat.
+  const needTapRef = useRef(needTap);
+  needTapRef.current = needTap;
+  useEffect(() => {
+    if (!needTap) return;
+    const events = ['pointerup', 'touchend', 'keydown', 'click'] as const;
+    const onTap = () => {
+      const t = needTapRef.current;
+      if (!t) return;
+      setNeedTap(null);
+      unlockVoice();
+      announce(t.intercom && groupRef.current ? 'Je rit is hervat. Intercom wordt weer aangezet.' : 'Je rit is hervat.', { chime: false });
+      if (t.intercom && groupRef.current) startIntercom();
+    };
+    events.forEach((e) => document.addEventListener(e, onTap, true));
+    return () => events.forEach((e) => document.removeEventListener(e, onTap, true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needTap]);
+
   // Na herladen automatisch terug in je groep
   useEffect(() => {
     const st = loadStoredGroup();
     const name = getSettings().riderName;
     // Niet als je net via een uitnodiging binnenkomt: die gaat voor
-    if (st && name && groupRidesAvailable() && !urlGroupAtStart.current) joinGroup(st.code, name, st.host, st.routeCode);
+    if (st && name && groupRidesAvailable() && !urlGroupAtStart.current) {
+      joinGroup(st.code, name, st.host, st.routeCode);
+      // Niet aan het rijden? Dan de route van de groep weer klaarzetten.
+      const s = !resumeAtStart.current && st.routeCode ? decodeShare(st.routeCode) : null;
+      if (s) openShared(s);
+    }
     return () => {
       groupRef.current?.leave();
       groupRef.current = null;
@@ -964,6 +1025,7 @@ export default function App() {
                   if (group) {
                     const rc = currentShareCode();
                     if (rc) group.sendRoute(rc);
+                    knownRouteRef.current = rc;
                     storeGroup({ code: group.code, host: group.host, routeCode: rc, at: Date.now() });
                     setGroupSheet(true);
                     setToast('Route gedeeld met de groep');
@@ -1075,11 +1137,16 @@ export default function App() {
             const rc = currentShareCode();
             if (!rc) return;
             group.sendRoute(rc);
+            knownRouteRef.current = rc;
             storeGroup({ code: group.code, host: group.host, routeCode: rc, at: Date.now() });
             setToast('Route gedeeld met de groep');
           }}
           onLoadRoute={() => {
             const s = pendingRoute && decodeShare(pendingRoute.code);
+            if (pendingRoute) {
+              knownRouteRef.current = pendingRoute.code;
+              storeGroup({ code: group.code, host: group.host, routeCode: pendingRoute.code, at: Date.now() });
+            }
             setPendingRoute(null);
             setGroupSheet(false);
             if (s) openShared(s);
@@ -1133,6 +1200,13 @@ export default function App() {
         />
       )}
 
+      {nav && needTap && (
+        <button className="resume-tap" onClick={() => {}}>
+          <b>Je rit is hervat</b>
+          <span>Tik om geluid{needTap.intercom && group ? ' en intercom' : ''} weer aan te zetten</span>
+        </button>
+      )}
+
       {busy && <div className="busy-toast">{busy}</div>}
       {toast && !busy && <div className="busy-toast info">{toast}</div>}
 
@@ -1151,7 +1225,10 @@ export default function App() {
           onQuick={group ? sendQuick : undefined}
           intercom={group ? intercomUI : undefined}
           onFix={group ? (f) => group.sendPosition(f, true) : undefined}
+          resume={nav.resume}
           onExit={(ride) => {
+            clearActiveRide();
+            setNeedTap(null);
             setNav(null);
             onNavView(null);
             setFitKey(Date.now());

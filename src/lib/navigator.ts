@@ -70,11 +70,19 @@ export class Navigator {
   private smoothedSpeed = 0;
   private speedSegs: SpeedSegment[] = [];
 
-  constructor(route: Route, prefs: RoutePrefs, cb: NavCallbacks) {
+  constructor(route: Route, prefs: RoutePrefs, cb: NavCallbacks, startAlong = 0) {
     this.route = route;
     this.prefs = prefs;
     this.cb = cb;
     this.computeViaAlong();
+    // Hervatte rit: verder waar je was, zonder de startinstructie opnieuw
+    if (startAlong > 0) {
+      this.lastAlong = startAlong;
+      let i = 0;
+      while (i < route.cum.length - 2 && route.cum[i + 1] <= startAlong) i++;
+      this.lastIndex = i;
+      this.started = true;
+    }
   }
 
   private computeViaAlong() {
