@@ -7,7 +7,7 @@ import { Navigator, Simulator, type NavState } from '../lib/navigator';
 import type { Poi } from '../lib/overpass';
 import { getSettings } from '../lib/settings';
 import { speedLimits, type Route, type RoutePrefs } from '../lib/valhalla';
-import { isVoiceEnabled, setVoiceEnabled, speak } from '../lib/voice';
+import { announce, isVoiceEnabled, setVoiceEnabled, speak } from '../lib/voice';
 import { IconClose, IconMute, IconPlay, IconRecenter, IconVolume } from './Icons';
 import { ManeuverIcon } from './ManeuverIcon';
 import type { NavView } from './MapView';
@@ -191,7 +191,7 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
       const behind = -(i.delta ?? 0);
       if (behind > gap && !gapWarned.current.has(i.rider.id)) {
         gapWarned.current.add(i.rider.id);
-        speak(`${i.rider.name} rijdt ${formatDistance(behind).replace('km', 'kilometer')} achter je. Even wachten?`, true);
+        if (getSettings().groupVoice) announce(`${i.rider.name} rijdt ${formatDistance(behind).replace('km', 'kilometer')} achter je. Even wachten?`);
       } else if (behind < gap / 2) gapWarned.current.delete(i.rider.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

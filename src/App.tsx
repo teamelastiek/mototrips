@@ -31,7 +31,7 @@ import {
   type QuickKind,
   type Rider,
 } from './lib/group';
-import { speak } from './lib/voice';
+import { announce } from './lib/voice';
 import { GroupChip, GroupNameDialog, GroupSheet, type RiderInfo } from './components/GroupUI';
 import { updateSettings } from './lib/settings';
 import { deleteSaved, loadPlanSettings, loadSaved, savePlanSettings, saveRoute, type SavedRoute } from './lib/storage';
@@ -529,6 +529,48 @@ export default function App() {
   };
 
   // ------------------------------------------------------------ groepsrit
+  // Gesproken groepsmeldingen (met eigen signaaltoon), tenzij uitgezet in Instellingen
+  const sayGroup = (text: string, urgent = false, withChime = true) => {
+    if (getSettings().groupVoice) announce(text, { urgent, chime: withChime });
+  };
+  const groupConn = useRef<{ connectedAt?: number; lost?: boolean }>({});
+  const riderSeen = useRef(new Map<string, { offlineSince?: number; offlineSaid?: boolean; staleSaid?: boolean }>());
+
+  /** Meld hardop wie erbij komt, wegvalt of geen locatie meer stuurt. */
+  function announceRiderChanges(list: Rider[]) {
+    const now = Date.now();
+    const settled = groupConn.current.connectedAt !== undefined && now - groupConn.current.connectedAt > 5000;
+    for (const r of list) {
+      let s = riderSeen.current.get(r.id);
+      if (!s) {
+        s = {};
+        riderSeen.current.set(r.id, s);
+        // Wie er al was toen jij binnenkwam, wordt niet aangekondigd
+        if (settled && r.online) sayGroup(`${r.name} rijdt mee.`);
+      }
+      if (!r.online) {
+        s.offlineSince ??= now;
+        // Even wachten: een korte hapering in het mobiele netwerk is geen melding waard
+        if (!s.offlineSaid && now - s.offlineSince > 30000) {
+          s.offlineSaid = true;
+          sayGroup(`${r.name} is niet meer verbonden met de groep.`);
+        }
+      } else {
+        if (s.offlineSaid) sayGroup(`${r.name} is weer verbonden.`);
+        s.offlineSince = undefined;
+        s.offlineSaid = false;
+        const stale = !!r.pos && now - r.seenAt > 90000;
+        if (stale && !s.staleSaid) {
+          s.staleSaid = true;
+          sayGroup(`Geen locatie meer van ${r.name}.`);
+        } else if (!stale && s.staleSaid) {
+          s.staleSaid = false;
+          sayGroup(`${r.name} is weer in beeld.`);
+        }
+      }
+    }
+  }
+
   const currentShareCode = () =>
     selected
       ? encodeShare({
@@ -545,19 +587,37 @@ export default function App() {
     groupRef.current?.leave();
     updateSettings({ riderName: name });
     const g = new GroupRide(code, name, host, routeCode, {
-      onRiders: setRiders,
-      onStatus: setGroupStatus,
+      onRiders: (list) => {
+        setRiders(list);
+        announceRiderChanges(list);
+      },
+      onStatus: (s) => {
+        setGroupStatus(s);
+        // Verbinding weg of terug: hardop melden (pas nadat we al eens verbonden waren)
+        const prev = groupConn.current;
+        if (s === 'connected') {
+          if (prev.lost) sayGroup('Weer verbonden met de groep.');
+          groupConn.current = { connectedAt: prev.connectedAt ?? Date.now(), lost: false };
+        } else if (s === 'error' && prev.connectedAt && !prev.lost) {
+          sayGroup('Verbinding met de groep verbroken. De app probeert het opnieuw.');
+          groupConn.current = { ...prev, lost: true };
+        }
+      },
       onMessage: (m) => {
         const q = QUICK[m.kind];
         setToast(`${q.icon} ${m.name}: ${q.text}`);
-        speak(`${m.name} ${q.spoken}.`, true);
+        sayGroup(`${m.name} ${q.spoken}.`, m.kind === 'trouble');
       },
       onRoute: (rc, from) => {
         const who = ridersRef.current.find((r) => r.id === from)?.name ?? 'Een groepsgenoot';
         setPendingRoute({ code: rc, from: who });
         setToast(`${who} heeft een nieuwe route gedeeld`);
+        sayGroup(`${who} heeft een nieuwe route gedeeld. Open de groep als je stilstaat om hem te laden.`);
       },
     });
+    groupConn.current = {};
+    riderSeen.current = new Map();
+    unlockVoice(); // via een tik gestart: zo mag iOS straks meldingen uitspreken
     // Een fout in de groepsverbinding mag de app nooit laten crashen
     g.connect().catch(() => setGroupStatus('error'));
     groupRef.current = g;
@@ -597,6 +657,8 @@ export default function App() {
   const sendQuick = (k: QuickKind) => {
     groupRef.current?.sendMessage(k);
     setToast(`${QUICK[k].icon} Verstuurd: ${QUICK[k].text}`);
+    // Bevestiging in je helm, zodat je niet hoeft te kijken of het gelukt is
+    sayGroup(`Verstuurd: ${QUICK[k].text.toLowerCase()}.`, false, false);
   };
 
   // Na herladen automatisch terug in je groep

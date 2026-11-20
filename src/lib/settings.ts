@@ -11,6 +11,8 @@ export interface AppSettings {
   riderName: string;
   /** Waarschuwen als iemand zo ver (km) achter raakt */
   groupGapKm: number;
+  /** Groepsberichten hardop voorlezen in je helm */
+  groupVoice: boolean;
 }
 
 const KEY = 'mototrips.settings';
@@ -22,6 +24,7 @@ const DEFAULTS: AppSettings = {
   recordRides: true,
   riderName: '',
   groupGapKm: 2,
+  groupVoice: true,
 };
 
 let cache: AppSettings | null = null;

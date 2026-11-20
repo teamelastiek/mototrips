@@ -3,7 +3,7 @@ import { clearRidden, riddenCells } from '../lib/logbook';
 import { clearOfflineMaps, offlineCacheSize } from '../lib/offline';
 import { getSettings, updateSettings, type AppSettings } from '../lib/settings';
 import { DEFAULT_SERVER, getServer, setServer } from '../lib/valhalla';
-import { isVoiceEnabled, setVoiceEnabled, speak, unlockVoice } from '../lib/voice';
+import { announce, isVoiceEnabled, setVoiceEnabled, speak, unlockVoice } from '../lib/voice';
 import { MicTest } from './MicTest';
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
@@ -85,7 +85,17 @@ export function Settings() {
           <Toggle label="Maximumsnelheid tonen" checked={s.showSpeedLimit} onChange={(v) => set({ showSpeedLimit: v })} />
           <Toggle label="Piep bij te hard rijden" checked={s.speedWarning} onChange={(v) => set({ speedWarning: v })} />
           <Toggle label="Ritten opnemen in logboek" checked={s.recordRides} onChange={(v) => set({ recordRides: v })} />
+          <Toggle label="Groepsberichten voorlezen" checked={s.groupVoice} onChange={(v) => set({ groupVoice: v })} />
         </div>
+        <button
+          className="secondary"
+          onClick={() => {
+            unlockVoice();
+            announce('Jan wil tanken.');
+          }}
+        >
+          Test groepsmelding
+        </button>
         <button
           className="secondary"
           onClick={() => {
