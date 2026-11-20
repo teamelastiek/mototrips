@@ -100,6 +100,7 @@ export class GroupRide {
   private lastFix?: PosPayload;
   private heartbeat?: number;
   private staleTimer?: number;
+  private left = false;
 
   constructor(code: string, name: string, host: boolean, routeCode: string | null, ev: GroupEvents) {
     this.code = code;
@@ -110,9 +111,16 @@ export class GroupRide {
     this.ev = ev;
   }
 
-  connect() {
+  async connect() {
     this.ev.onStatus('connecting');
-    const ch = getClient().channel(`mototrips-ride-${this.code}`, {
+    const sb = getClient();
+    const name = `mototrips-ride-${this.code}`;
+    // Een eerder (nog niet helemaal gesloten) kanaal met dezelfde naam eerst opruimen,
+    // anders geeft de client dat oude, al geabonneerde kanaal terug.
+    const olds = sb.getChannels().filter((o) => o.topic === `realtime:${name}`);
+    if (olds.length) await Promise.all(olds.map((o) => sb.removeChannel(o).catch(() => {})));
+    if (this.left) return;
+    const ch = sb.channel(name, {
       config: { broadcast: { self: false, ack: false }, presence: { key: this.me.id, enabled: true } },
     });
     this.channel = ch;
@@ -229,6 +237,7 @@ export class GroupRide {
   }
 
   async leave() {
+    this.left = true;
     clearInterval(this.heartbeat);
     clearInterval(this.staleTimer);
     if (this.channel) {

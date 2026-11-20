@@ -1,5 +1,25 @@
 // Client voor de Valhalla-routeringsengine (OpenStreetMap), motorprofiel.
-import { cumulative, type LatLng } from './geo';
+import { bearing, cumulative, projectOnRoute, type LatLng } from './geo';
+
+/** Tussenpunt, met de rijrichting waarin de route er doorheen gaat. */
+export type Via = LatLng & { heading?: number };
+
+/**
+ * Tussenpunten verplaatsen naar de plek op de route waar die er echt langs gaat.
+ * Zo levert opnieuw berekenen (delen, bewaren, groepsrit) exact dezelfde route op,
+ * in plaats van dat een los punt naast de weg aan een andere weg gekoppeld wordt.
+ */
+function snapVias(shape: LatLng[], cum: number[], vias: Via[]): Via[] {
+  let from = 0;
+  return vias.map((v) => {
+    const p = projectOnRoute(v, shape, cum, from);
+    if (!p) return { lat: v.lat, lon: v.lon };
+    from = p.index;
+    // Rijrichting op dit punt: zonder richting kan de server de weg in tegengestelde richting nemen
+    const heading = Math.round(bearing(shape[p.index], shape[Math.min(p.index + 1, shape.length - 1)]));
+    return { lat: +p.point.lat.toFixed(6), lon: +p.point.lon.toFixed(6), heading };
+  });
+}
 
 export interface RoutePrefs {
   /** 0 = rustig, 1 = wat bochten, 2 = bochtig, 3 = zo bochtig mogelijk */
@@ -53,7 +73,7 @@ export interface Route {
   hasToll: boolean;
   hasFerry: boolean;
   /** Tussenpunten waar de route doorheen gaat (zonder start en eind). */
-  vias: LatLng[];
+  vias: Via[];
   start: LatLng;
   end: LatLng;
 }
@@ -206,7 +226,7 @@ export const MAX_LOCATIONS = 10;
 
 /** Plak meerdere routes achter elkaar tot één route. */
 export function mergeRoutes(parts: Route[], vias: LatLng[]): Route {
-  if (parts.length === 1) return { ...parts[0], vias };
+  if (parts.length === 1) return { ...parts[0], vias: snapVias(parts[0].shape, parts[0].cum, vias) };
   const shape: LatLng[] = [];
   const maneuvers: Maneuver[] = [];
   parts.forEach((r, pi) => {
@@ -230,7 +250,7 @@ export function mergeRoutes(parts: Route[], vias: LatLng[]): Route {
     hasHighway: parts.some((r) => r.hasHighway),
     hasToll: parts.some((r) => r.hasToll),
     hasFerry: parts.some((r) => r.hasFerry),
-    vias,
+    vias: snapVias(shape, cum, vias),
     start: parts[0].start,
     end: parts[parts.length - 1].end,
   };
@@ -471,7 +491,7 @@ function parseTrip(trip: any, locations: RoutingLocation[]): Route {
     hasHighway: !!s.has_highway,
     hasToll: !!s.has_toll,
     hasFerry: !!s.has_ferry,
-    vias: locations.slice(1, -1).map(({ lat, lon }) => ({ lat, lon })),
+    vias: snapVias(shape, cum, locations.slice(1, -1)),
     start: { lat: locations[0].lat, lon: locations[0].lon },
     end: { lat: locations[locations.length - 1].lat, lon: locations[locations.length - 1].lon },
   };

@@ -122,6 +122,8 @@ export default function App() {
 
   // ------------------------------------------------------------ groepsrit
   const groupRef = useRef<GroupRide | null>(null);
+  // Groepscode uit de link waarmee de app geopend werd (vóór de URL wordt opgeschoond)
+  const urlGroupAtStart = useRef(groupCodeFromUrl());
   const [group, setGroup] = useState<GroupRide | null>(null);
   const [riders, setRidersState] = useState<Rider[]>([]);
   const ridersRef = useRef<Rider[]>([]);
@@ -187,7 +189,13 @@ export default function App() {
     const shared = takeSharedFromUrl();
     if (g) {
       if (!shared) history.replaceState(null, '', location.pathname + location.search);
-      if (groupRef.current?.code !== g) setNameDialog({ mode: 'join', code: g, routeCode: routeMatch?.[1] ?? null });
+      if (groupRef.current?.code !== g) {
+        const st = loadStoredGroup();
+        const name = getSettings().riderName;
+        // Al lid van deze groep (link nog eens geopend)? Dan direct weer verbinden.
+        if (st?.code === g && name) joinGroup(g, name, st.host, routeMatch?.[1] ?? st.routeCode);
+        else setNameDialog({ mode: 'join', code: g, routeCode: routeMatch?.[1] ?? null });
+      }
     }
     if (shared) openShared(shared);
   }
@@ -550,7 +558,8 @@ export default function App() {
         setToast(`${who} heeft een nieuwe route gedeeld`);
       },
     });
-    g.connect();
+    // Een fout in de groepsverbinding mag de app nooit laten crashen
+    g.connect().catch(() => setGroupStatus('error'));
     groupRef.current = g;
     setGroup(g);
     setRiders([]);
@@ -594,8 +603,12 @@ export default function App() {
   useEffect(() => {
     const st = loadStoredGroup();
     const name = getSettings().riderName;
-    if (st && name && groupRidesAvailable() && !groupCodeFromUrl()) joinGroup(st.code, name, st.host, st.routeCode);
-    return () => groupRef.current?.leave() as unknown as void;
+    // Niet als je net via een uitnodiging binnenkomt: die gaat voor
+    if (st && name && groupRidesAvailable() && !urlGroupAtStart.current) joinGroup(st.code, name, st.host, st.routeCode);
+    return () => {
+      groupRef.current?.leave();
+      groupRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

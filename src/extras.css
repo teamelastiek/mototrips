@@ -745,3 +745,14 @@
 .rider-pin.stale {
   opacity: 0.45;
 }
+
+/* Meldingen tijdens navigeren onder de afslagbalk, zodat de afslag zichtbaar blijft */
+.navigating .busy-toast {
+  top: calc(150px + env(safe-area-inset-top));
+  z-index: 8;
+}
+@media (min-width: 860px) {
+  .navigating .busy-toast {
+    left: 50%;
+  }
+}

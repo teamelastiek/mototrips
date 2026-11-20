@@ -1,19 +1,19 @@
 // Routes delen via een link: alle punten en voorkeuren zitten in de URL zelf.
 import type { LatLng } from './geo';
-import type { RoutePrefs } from './valhalla';
+import type { RoutePrefs, Via } from './valhalla';
 
 export interface SharedRoute {
   name: string;
   mode: 'loop' | 'ab';
   start: LatLng;
   end: LatLng;
-  vias: LatLng[];
+  vias: Via[];
   prefs: RoutePrefs;
 }
 
 const r5 = (n: number) => Math.round(n * 1e5) / 1e5;
-const pt = (p: LatLng) => [r5(p.lat), r5(p.lon)];
-const unpt = (a: number[]): LatLng => ({ lat: a[0], lon: a[1] });
+const pt = (p: Via) => (p.heading !== undefined ? [r5(p.lat), r5(p.lon), Math.round(p.heading)] : [r5(p.lat), r5(p.lon)]);
+const unpt = (a: number[]): Via => (a.length > 2 ? { lat: a[0], lon: a[1], heading: a[2] } : { lat: a[0], lon: a[1] });
 
 function b64urlEncode(s: string) {
   const bytes = new TextEncoder().encode(s);

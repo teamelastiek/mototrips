@@ -172,7 +172,7 @@ export function GroupSheet({
 export function GroupChip({ count, status, onClick }: { count: number; status: 'connecting' | 'connected' | 'error'; onClick: () => void }) {
   return (
     <button className={`group-chip ${status}`} onClick={onClick} title="Groepsrit">
-      👥 <b>{count + 1}</b> <span>rijders</span>
+      👥 <b>{count + 1}</b> <span>{count + 1 === 1 ? 'rijder' : 'rijders'}</span>
     </button>
   );
 }
