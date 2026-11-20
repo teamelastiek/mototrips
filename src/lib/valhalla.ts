@@ -328,27 +328,17 @@ export async function speedLimits(r: Route, signal?: AbortSignal): Promise<Speed
   for (let i = 0; i < r.shape.length - 1; i += CHUNK - 1) {
     const chunk = r.shape.slice(i, i + CHUNK);
     const base = r.cum[i];
+    // map_snap: de routelijn aan de wegen koppelen. (De exacte variant "edge_walk" weigert
+    // de server bij onze samengestelde routes altijd; die extra poging kostte alleen data.)
     const data = await post(
       'trace_attributes',
       {
         shape: chunk.map((p) => ({ lat: +p.lat.toFixed(6), lon: +p.lon.toFixed(6) })),
         costing: 'motorcycle',
-        shape_match: 'edge_walk',
+        shape_match: 'map_snap',
         filters: { attributes: ['edge.speed_limit', 'edge.length'], action: 'include' },
       },
       signal,
-    ).catch(() =>
-      // edge_walk vereist een exacte match; anders gewoon op de kaart klikken
-      post(
-        'trace_attributes',
-        {
-          shape: chunk.map((p) => ({ lat: +p.lat.toFixed(6), lon: +p.lon.toFixed(6) })),
-          costing: 'motorcycle',
-          shape_match: 'map_snap',
-          filters: { attributes: ['edge.speed_limit', 'edge.length'], action: 'include' },
-        },
-        signal,
-      ),
     );
     let pos = base;
     for (const e of (data?.edges ?? []) as { speed_limit?: number | string; length: number }[]) {

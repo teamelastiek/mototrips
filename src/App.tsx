@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { IconBike, IconBookmark, IconChevron, IconGear, IconLog } from './components/Icons';
 import { Logbook } from './components/Logbook';
-import { MapView, type NavView } from './components/MapView';
+import { MapView, type MapHandle, type NavView } from './components/MapView';
 import { NavigationView } from './components/NavigationView';
 import { getCurrentPosition } from './components/PlaceInput';
 import { Planner, type PlanSettings } from './components/Planner';
@@ -139,8 +139,27 @@ export default function App() {
   const [inviteNotice, setInviteNotice] = useState<string | null>(null);
 
   const [nav, setNav] = useState<{ route: Route; demo: boolean; name: string; fuel: Poi[] } | null>(null);
-  const [navView, setNavView] = useState<NavView | null>(null);
+  // De kaart krijgt navigatie-updates rechtstreeks (zonder de hele app opnieuw op te bouwen);
+  // de eigen positie voor de groepslijst wordt maar eens per 5 s bijgewerkt.
+  const mapApi = useRef<MapHandle>(null);
+  const [navPos, setNavPos] = useState<LatLng | null>(null);
+  const navPosAt = useRef(0);
+  const followRef = useRef(true);
+  const onNavView = (v: NavView | null) => {
+    mapApi.current?.updateNav(v ? { ...v, follow: followRef.current } : null);
+    if (!v) {
+      setNavPos(null);
+      navPosAt.current = 0;
+    } else if (Date.now() - navPosAt.current > 5000) {
+      navPosAt.current = Date.now();
+      setNavPos(v.position);
+    }
+  };
   const [follow, setFollow] = useState(true);
+  useEffect(() => {
+    followRef.current = follow;
+    mapApi.current?.setFollow(follow);
+  }, [follow]);
 
   const selected = candidates.find((c) => c.id === selectedId);
   const selectedRide = rides.find((r) => r.id === selectedRideId);
@@ -781,7 +800,7 @@ export default function App() {
   }, [group, nav]);
 
   const riderInfos: RiderInfo[] = useMemo(() => {
-    const me = navView?.position ?? myLoc;
+    const me = navPos ?? myLoc;
     const r = selected?.route;
     let myAlong: number | null = null;
     if (me && r) {
@@ -797,7 +816,7 @@ export default function App() {
       }
       return { rider: rd, delta, straight: Math.round(Math.hypot((rd.pos.lat - me.lat) * 111320, (rd.pos.lon - me.lon) * 111320 * Math.cos((me.lat * Math.PI) / 180))) };
     });
-  }, [riders, navView, myLoc, selected]);
+  }, [riders, navPos, myLoc, selected]);
 
   const mapRiders = useMemo(
     () =>
@@ -845,7 +864,8 @@ export default function App() {
         riders={mapRiders}
         fitKey={fitKey}
         centerOn={centerOn}
-        nav={navView ? { ...navView, follow } : null}
+        navActive={!!nav}
+        ref={mapApi}
         padding={padding}
         onMapClick={onMapClick}
         onCandidateClick={selectCandidate}
@@ -1085,14 +1105,14 @@ export default function App() {
           follow={follow}
           fuelStops={nav.fuel}
           setFollow={setFollow}
-          onView={setNavView}
+          onView={onNavView}
           riders={group ? riders : []}
           onQuick={group ? sendQuick : undefined}
           intercom={group ? intercomUI : undefined}
           onFix={group ? (f) => group.sendPosition(f, true) : undefined}
           onExit={(ride) => {
             setNav(null);
-            setNavView(null);
+            onNavView(null);
             setFitKey(Date.now());
             if (ride) {
               setRides(loadRides());

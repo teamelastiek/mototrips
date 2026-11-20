@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { distance, formatDistance, formatDuration, pointAlong, projectOnRoute } from '../lib/geo';
+import { distance, formatDistance, formatDuration, projectOnRoute } from '../lib/geo';
 import { isStale, QUICK, type QuickKind, type Rider } from '../lib/group';
 import { PeerBadge, relLabel, type IntercomUI, type RiderInfo } from './GroupUI';
 import { RideRecorder, type RideRecord } from '../lib/logbook';
@@ -84,14 +84,15 @@ export function NavigationView({ route, name, prefs, demo: startDemo, follow, fu
     const nav = new Navigator(route, prefs, {
       onState: (s) => {
         setState(s);
-        const r = routeRef.current;
-        const idx = pointAlong(r.shape, r.cum, s.along).index;
         onFixRef.current?.({ lat: s.raw.lat, lon: s.raw.lon, heading: s.heading, speedKmh: s.speedKmh, accuracy: s.accuracy });
+        // Alleen positie en voortgang doorgeven; de routelijn zelf staat al op de kaart
         onView({
           position: s.position,
           heading: s.heading,
           speedKmh: s.speedKmh,
-          remaining: s.offRoute ? r.shape : [s.position, ...r.shape.slice(idx + 1)],
+          along: s.along,
+          offRoute: s.offRoute,
+          shape: routeRef.current.shape,
           follow: followRef.current,
         });
         // Te hard? Eén piepje per overtreding
