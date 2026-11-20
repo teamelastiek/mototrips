@@ -103,7 +103,12 @@ export function stopSuggestions(route: Route, pois: Poi[], fuelRangeKm: number) 
 }
 
 export function RouteDetails({ route, extras, departure, setDeparture, fuelRangeKm, sun, onAddStop, onFocus, onRetry }: Props) {
-  const [open, setOpen] = useState<'fuel' | 'pause' | null>(null);
+  const [open, setOpenState] = useState<'fuel' | 'pause' | null>(null);
+  // Plekken pas ophalen als je de sectie openklapt
+  const setOpen = (v: 'fuel' | 'pause' | null) => {
+    setOpenState(v);
+    if (v && extras.pois.state === 'idle') onRetry('pois');
+  };
   const { needsFuel, fuelList, pauseList } = stopSuggestions(route, extras.pois.state === 'ok' ? extras.pois.data : [], fuelRangeKm);
 
   const warnings = extras.weather.state === 'ok' ? weatherWarnings(extras.weather.data) : [];
@@ -197,7 +202,7 @@ export function RouteDetails({ route, extras, departure, setDeparture, fuelRange
       <section className="detail">
         <button className="detail-toggle" onClick={() => setOpen(open === 'pause' ? null : 'pause')} aria-expanded={open === 'pause'}>
           <h3>☕ Pauzeplek</h3>
-          <span className="pill">{extras.pois.state === 'ok' ? `${pauseList.length} rond de helft` : '…'}</span>
+          <span className="pill">{extras.pois.state === 'ok' ? `${pauseList.length} rond de helft` : extras.pois.state === 'idle' ? 'tik om te zoeken' : '…'}</span>
         </button>
         {open === 'pause' && (
           <>

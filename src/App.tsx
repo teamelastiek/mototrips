@@ -331,7 +331,7 @@ export default function App() {
       const ex = extras[selected.id] ?? EMPTY_EXTRAS;
       if (ex.elevation.state === 'idle') loadExtra(selected, 'elevation', departure);
       if (ex.weather.state === 'idle') loadExtra(selected, 'weather', departure);
-      if (ex.pois.state === 'idle') loadExtra(selected, 'pois', departure);
+      // Tankstations/pauzeplekken pas zoeken als je die sectie opent (spaart de gratis servers)
     }, 500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
